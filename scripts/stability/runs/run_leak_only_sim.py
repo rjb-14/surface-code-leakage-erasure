@@ -81,7 +81,7 @@ def logical_error_rate_leak_only(
         Pauli_locations="all",
         leak_locations="2-qubit gates",
         ec_sched=8,
-        leak_effect="depolarize",
+        leak_effect="skip gates",
         use_branch_and_bound=False,
     )
 
@@ -126,7 +126,7 @@ def main():
 
     slurm_job_id = os.environ.get("SLURM_JOB_ID", "")
     job_suffix = f"_job{slurm_job_id}" if slurm_job_id else ""
-    fname = f"{args.outdir}/leak_only_style-{args.style}_d{args.distance}_depolarize{job_suffix}.dat"
+    fname = f"{args.outdir}/leak_only_style-{args.style}_d{args.distance}_skip_gates{job_suffix}.dat"
     print(f"Saving results to {fname}")
 
     for rounds in args.rounds:
@@ -147,7 +147,7 @@ def main():
 
             with open(fname, "a") as f:
                 f.write("\t".join([
-                    args.style, "depolarize", str(args.distance), f"{p_leak:.2e}", "inf", "8",
+                    args.style, "skip_gates", str(args.distance), f"{p_leak:.2e}", "inf", "8",
                     str(rounds)] +
                     format_results(res))
                     + "\n")
