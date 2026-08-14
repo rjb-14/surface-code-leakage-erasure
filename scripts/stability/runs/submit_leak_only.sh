@@ -17,6 +17,7 @@ module load StdEnv
 ###########################################
 
 module load GCC
+module load Python/3.12.3-GCCcore-13.3.0
 module load uv
 
 # IMPORTANT: submit this from the repo root (surface-code-leakage-erasure/),
