@@ -12,14 +12,16 @@ appends one line per pair to a .dat file under --outdir.
 import argparse
 import os
 
+import numpy as np
+
 from surface_code_leakage_erasure import (
     SurfaceCodeErasureSampler,
     StabilityCircuitBuilder, StabilityLayout,
     WalkingStabilityCircuitBuilder, WalkingStabilityCircuitLayout,
 )
 
-DEFAULT_ROUNDS_LIST = [2, 3, 4, 5]
-DEFAULT_P_LEAK_LIST = [0.01, 0.015, 0.02, 0.025, 0.03]
+DEFAULT_ROUNDS_LIST = [3, 4, 5, 6]
+DEFAULT_P_LEAK_LIST = np.logspace(np.log10(2e-2), np.log10(1e-2), 15).tolist()
 
 
 def build_layout_and_sampler(style: str, distance: int, n_jobs: int):
