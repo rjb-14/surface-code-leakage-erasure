@@ -223,8 +223,22 @@ class WalkingStabilityCircuitBuilder(CircuitBuilder):
         if leakage_circuit_locations is None:
             leakage_circuit_locations = {}
         self.final_round_parity = (rounds - 1) % 2
-        self._get_final_detector_text.cache_clear()
-        self._get_final_observable_text.cache_clear()
+        # NOTE: deliberately not cache_clear()-ing _get_final_detector_text /
+        # _get_final_observable_text here (unlike the pre-port version this was
+        # adapted from). Both are @cache-wrapped on (basis, final_rnd) /
+        # (rounds, basis) respectively -- args that already fully determine
+        # their output -- so the cache is correct without clearing, and clearing
+        # it every build defeats the protection this caching is meant to give:
+        # CircuitBuilder.get_circuit()'s newer _track_measurements optimization
+        # (see stability_circuit.py's final_observable for the fuller
+        # explanation) stops replaying measurement lists into self.tracker on
+        # repeat get_circuit() calls with the same (rounds, basis) on one
+        # shared builder instance -- exactly what ErasureDecoder does while
+        # decoding a shot. Recomputing these texts from a tracker left stale
+        # by that on every build (as cache_clear() forced) read missing/wrong
+        # measurement records; reusing the first build's (already correct,
+        # fully-tracked) cached text avoids that, the same way
+        # SurfaceCodeCircuitBuilder's final_observable caching already does.
 
         return super().get_circuit(
             rounds, p, p_leak,
