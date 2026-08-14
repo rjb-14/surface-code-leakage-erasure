@@ -66,9 +66,12 @@ def _single_erasure_sample(circuitbuilder, decoder, pams : 'SamplerParameters', 
 def _erasure_sample_batch(
     layout: SurfaceCodeLayout | WalkingSurfaceCodeLayout, batch_size: int,
     pams : 'SamplerParameters', deadline: float | None = None,
+    circuit_builder_class=None,
 ) -> tuple[int, int, int]:
     # implement serial batch of erasure samples
-    if isinstance(layout, WalkingSurfaceCodeLayout):
+    if circuit_builder_class is not None:
+        circuitbuilder = circuit_builder_class(layout)
+    elif isinstance(layout, WalkingSurfaceCodeLayout):
         circuitbuilder = WalkingSCCircuitBuilder(layout)
     else:
         circuitbuilder = SurfaceCodeCircuitBuilder(layout)
@@ -125,7 +128,9 @@ class SurfaceCodeErasureSampler:
         return _single_erasure_sample(circuitbuilder, decoder, pams)
 
     def erasure_sample_batch(self, batch_size: int, pams : 'SamplerParameters') -> tuple[int, int, int]:
-        return _erasure_sample_batch(self.layout, batch_size, pams)
+        return _erasure_sample_batch(
+            self.layout, batch_size, pams,
+            circuit_builder_class=self.circuit_builder_class)
 
     def parallel_erasure_samples(
         self, pams: 'SamplerParameters', num_samples: int | None = None,
@@ -154,7 +159,9 @@ class SurfaceCodeErasureSampler:
 
         # dispatch to module-level worker
         results = self.parallel(
-            delayed(_erasure_sample_batch)(self.layout, batch_size, pams, deadline)
+            delayed(_erasure_sample_batch)(
+                self.layout, batch_size, pams, deadline,
+                circuit_builder_class=self.circuit_builder_class)
             for batch_size in batch_size_list
         )
 

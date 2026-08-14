@@ -16,12 +16,29 @@ from .walking_circuit_builder import (
     WalkingSCCircuitBuilder,
 )
 
+from .stability_circuit import (
+    StabilityLayout,
+    StabilityCircuitBuilder,
+)
+
+from .walking_stability_circuit import (
+    WalkingStabilityCircuitLayout,
+)
+
+from .walking_stability_builder import (
+    WalkingStabilityCircuitBuilder,
+)
+
 from .tracker import (
     MeasurementTracker,
 )
 
 from .decoding import (
     ErasureDecoder,
+)
+
+from .modified_mle import (
+    ModifiedMLEDecoder,
 )
 
 from .erasure_sampler import (
@@ -35,13 +52,18 @@ __all__ = [
     # layouts
     "SurfaceCodeLayout",
     "WalkingSurfaceCodeLayout",
+    "StabilityLayout",
+    "WalkingStabilityCircuitLayout",
     # circuit builders
     "SurfaceCodeCircuitBuilder",
     "WalkingSCCircuitBuilder",
+    "StabilityCircuitBuilder",
+    "WalkingStabilityCircuitBuilder",
     # Tracker
     "MeasurementTracker",
     # Erasure decoder
     "ErasureDecoder",
+    "ModifiedMLEDecoder",
     # Erasure sampler
     "SurfaceCodeErasureSampler",
     "CircuitParameters",
