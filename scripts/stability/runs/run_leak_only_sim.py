@@ -21,7 +21,7 @@ from surface_code_leakage_erasure import (
 )
 
 DEFAULT_ROUNDS_LIST = [3, 4, 5, 6]
-DEFAULT_P_LEAK_LIST = np.logspace(np.log10(2e-2), np.log10(2e-1), 15).tolist()
+DEFAULT_P_LEAK_LIST = np.logspace(np.log10(2e-2), np.log10(2e-1), 10).tolist()
 
 
 def build_layout_and_sampler(style: str, distance: int, n_jobs: int):
