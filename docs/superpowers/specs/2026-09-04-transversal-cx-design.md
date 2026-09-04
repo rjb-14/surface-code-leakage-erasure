@@ -266,11 +266,19 @@ $$Z\text{-plaq}_2(P) \to Z\text{-plaq}_1(\bar P)\cdot Z\text{-plaq}_2(P)$$
 $$Z\text{-plaq}_1 \to Z\text{-plaq}_1,\qquad X\text{-plaq}_2 \to X\text{-plaq}_2$$
 
 设 CX 前最后一轮（round `R-1`）的测量结果为 $m_{R-1}$，CX 后第一轮
-（round `R`）为 $m_R$。CX 前态满足
-$X\text{-plaq}_1(P)|\psi\rangle = (-1)^{m_{R-1}}|\psi\rangle$；
-CX 后 $|\psi'\rangle = U|\psi\rangle$ 满足
-$U X\text{-plaq}_1(P) U^\dagger |\psi'\rangle = (-1)^{m_{R-1}}|\psi'\rangle$。
-因此确定性的量是 $m_R^{X(1)} \oplus m_R^{X(2)}(\bar P) = m_{R-1}^{X(1)}$。
+（round `R`）为 $m_R$。因为 CX 自逆（$U^\dagger = U$），
+patch 1 的 X 稳定子在 CX 后的取值由**两个 CX 前**的测量决定：
+
+$$U^\dagger X\text{-plaq}_1(P)\, U = X\text{-plaq}_1(P)\cdot X\text{-plaq}_2(\bar P)
+\;\Longrightarrow\;
+m_R^{X(1)}(P) = m_{R-1}^{X(1)}(P) \oplus m_{R-1}^{X(2)}(\bar P)$$
+
+$$U^\dagger Z\text{-plaq}_2(P)\, U = Z\text{-plaq}_1(\bar P)\cdot Z\text{-plaq}_2(P)
+\;\Longrightarrow\;
+m_R^{Z(2)}(P) = m_{R-1}^{Z(2)}(P) \oplus m_{R-1}^{Z(1)}(\bar P)$$
+
+**交叉项在 round `R-1`（CX 前），不是 round `R`。** 见 7.4：把交叉项放在
+round `R` 也是确定性的，但会把 hyperedge 挂到 CX 层的主导噪声上。
 
 ### 7.2 结论
 
@@ -278,41 +286,78 @@ $U X\text{-plaq}_1(P) U^\dagger |\psi'\rangle = (-1)^{m_{R-1}}|\psi'\rangle$。
 
 | 稳定子 | detector | rec 数 |
 |---|---|---|
-| patch 1 的 **X** plaq $P$ | $m_R^{X(1)}(P) \oplus m_R^{X(2)}(\bar P) \oplus m_{R-1}^{X(1)}(P)$ | 3 |
-| patch 2 的 **Z** plaq $P$ | $m_R^{Z(2)}(P) \oplus m_R^{Z(1)}(\bar P) \oplus m_{R-1}^{Z(2)}(P)$ | 3 |
+| patch 1 的 **X** plaq $P$ | $m_R^{X(1)}(P) \oplus m_{R-1}^{X(1)}(P) \oplus m_{R-1}^{X(2)}(\bar P)$ | 3 |
+| patch 2 的 **Z** plaq $P$ | $m_R^{Z(2)}(P) \oplus m_{R-1}^{Z(2)}(P) \oplus m_{R-1}^{Z(1)}(\bar P)$ | 3 |
 | patch 1 的 Z plaq | 普通两项 | 2 |
 | patch 2 的 X plaq | 普通两项 | 2 |
 
 round `R+1` 及以后恢复正常（帧在 CX 之后不再变化）。
 
 口诀：**X 沿 control → target 传播，所以 control 的 X check 吸收 target 的；
-Z 沿 target → control 传播，所以 target 的 Z check 吸收 control 的。**
+Z 沿 target → control 传播，所以 target 的 Z check 吸收 control 的——
+且吸收的是 CX 前那一轮的记录。**
+
+实现上三个 rec 全部来自基类已经在用的两个调用：
+`get_curr_meas(自己的 ancilla)`、`get_prev_meas(自己的 ancilla)`、
+`get_prev_meas(配对 ancilla)`。
 
 ### 7.3 验算
 
-**CX 前 patch 2 数据比特 $\bar q$ 上一个 Z 错误**，传播成 $Z_q^{(1)}Z_{\bar q}^{(2)}$：
+记 CX 前 patch 2 数据比特 $\bar q$ 相邻的两个 X plaquette 为 $\bar P_1,\bar P_2$，
+patch 1 对应的为 $P_1, P_2$。
 
-- patch 1 的 X detector（3 项）：$m_R^{X(1)}$ 与配对的 $m_R^{X(2)}$ **同时翻转、相消**，不触发
-- patch 2 的 X detector（2 项）：$m_R^{X(2)}$ 翻转，触发 2 个
+| 错误 | 触发的 detector | 数量 |
+|---|---|---|
+| CX **后** patch 1 上 $Z_q$ | $m_R^{X(1)}(P_i)$ 翻转 → patch 1 的两个 3 项 detector | 2 ✓ |
+| CX **后** patch 2 上 $Z_{\bar q}$ | $m_R^{X(2)}(\bar P_i)$ 翻转 → patch 2 的两个 2 项 detector | 2 ✓ |
+| CX **前** patch 1 上 $Z_q$（$Z_q^{(1)}\to Z_q^{(1)}$） | 同上第一行 | 2 ✓ |
+| CX **前** patch 2 上 $Z_{\bar q}$（$\to Z_q^{(1)}Z_{\bar q}^{(2)}$） | patch 1 的两个 + patch 2 的两个 | **4，hyperedge** |
 
-净效果：2 个 detector 触发，且定位在错误真正发生的 patch 2。图仍是 graphlike。
+X 侧（Z detector）完全对称。
 
-**CX 前 patch 1 数据比特 $q$ 上一个 X 错误**，传播成 $X_q^{(1)}X_{\bar q}^{(2)}$：
+最后一行是**唯一**的 hyperedge 来源，且它本身就是一个两比特关联错误：
+单比特 $Z_{\bar q}$ 经 CX 传播成 $Z_q^{(1)}Z_{\bar q}^{(2)}$。这与普通 SE 里
+CNOT 上 `DEPOLARIZE2` 产生 $Z\otimes Z$ 属同一类，stim 例行分解
+（它可拆成"CX 后 patch 1 上 $Z_q$"⊕"CX 后 patch 2 上 $Z_{\bar q}$"，
+两者都是电路中真实存在的机制）。
 
-- patch 1 的 Z detector（2 项，普通）：$m_R^{Z(1)}$ 翻转，触发 2 个
-- patch 2 的 Z detector（3 项）：$m_R^{Z(2)}$ 与 $m_R^{Z(1)}(\bar P)$ 同时翻转、相消，不触发
+### 7.4 为什么交叉项取 CX 前而不是 CX 后
 
-净效果：2 个 detector 触发在 patch 1。对称，正确。
+把交叉项放在 round `R` 同样是确定性的：
 
-**CX 之后**发生的错误：帧已稳定，普通两项 detector 正常定位。
+$$U^\dagger\big(X\text{-plaq}_1(P)X\text{-plaq}_2(\bar P)\big)U = X\text{-plaq}_1(P)
+\;\Longrightarrow\; m_R^{X(1)}(P)\oplus m_R^{X(2)}(\bar P) = m_{R-1}^{X(1)}(P)$$
 
-### 7.4 一个等价但不采用的写法
+两种写法相差一个 patch 2 自己的普通 detector，张成同一个空间，都合法——
+**这是选基问题，不是对错问题。** 但错误特征完全不同：
 
-也可以写成 4 项：(patch 1 普通 detector) ⊕ (patch 2 普通 detector)。
-它与上面 3 项的版本相差一个 $m_{R-1}^{X(2)}$，两者张成同一个空间、都合法，
-但 3 项版本是**最小/局域**的，保持匹配图局域性。**采用 3 项版本。**
+| 错误 | 交叉项 @ round `R` | 交叉项 @ round `R-1`（采用） |
+|---|---|---|
+| CX 后 patch 2 上 $Z$ | **4，hyperedge** | 2 ✓ |
+| CX 后 patch 1 上 $Z$ | 2 | 2 ✓ |
+| CX 前 patch 1 上 $Z$ | 2 | 2 ✓ |
+| CX 前 patch 2 上 $Z$ | 2 ✓ | **4，hyperedge** |
 
-### 7.5 实现
+CX 层的 `DEPOLARIZE2` 在门**之后**施加（照 `make_stabilizer_gates` 的
+"先门、再 Pauli"顺序），其 $I\otimes Z$ 分量正是"CX 后 patch 2 上 $Z$"。
+交叉项取 round `R` 会把 hyperedge 挂在 CX 层的**主导噪声**上；取 round `R-1`
+则只剩下"CX 前 patch 2 上的错误"这一类**本来就是关联错误**的机制。
+**采用 round `R-1`。**
+
+### 7.5 DEM 不是 graphlike
+
+无论选哪种基，7.3 表格最后一行的 hyperedge 都无法消除——
+它反映的是"单比特错误经 transversal CX 传播成跨 patch 两比特错误"这一物理事实。
+因此：
+
+- **`shortest_graphlike_error()` 不是本电路的正确距离工具**，它只看 ≤2 detector
+  的机制，会漏掉需要 hyperedge 的最小重量逻辑错误。距离验证方案见第 13 节。
+- hyperedge 应当是**可分解**的（`decompose_errors=True`），因为每个 4-detector
+  机制都能拆成两个电路中真实存在的 2-detector 机制。这一点需要测试确认
+  （`detector_error_model(decompose_errors=True)` 不抛异常）。
+- 解码侧的影响留到解码 spec；本次范围内只需保证距离验证用对工具。
+
+### 7.6 实现
 
 mixin 覆盖 `_get_detector_text(rnd, basis)`，**并且必须自己把 `rnd` 归约到
 基类的周期取值，不能让基类的递归自己走**：
@@ -337,7 +382,7 @@ def _get_detector_text(self, rnd, basis):
 static 侧同样适用：基类只用 `{0, 1}`，`1 + (rnd-1)%2 ∈ {1, 2}` 中的 `2`
 会被基类折叠回 `1`，行为不变。
 
-配对查找用 `self.layout.pair()`。static 侧遍历 `self.x_plaquettes` / `self.z_plaquettes`
+配对查找用 `self.layout.pair()`（第三个 rec 用配对 ancilla 的 `get_prev_meas`）。static 侧遍历 `self.x_plaquettes` / `self.z_plaquettes`
 并按 patch 归属分流；walking 侧的 detector 是 layout 预存的索引元组，
 需要按 ancilla index 判断归属（`index < index_shift` 即 patch 1）并追加配对项。
 
@@ -510,22 +555,40 @@ walking builder 没有 erasure swap 机制，此节不适用。
 1. **确定性**：`p=0`、`p_leak=0` 下 `circuit.detector_error_model()` 不抛异常
    （detector 与 observable 均确定）。static / walking(late) / moonwalking(early)
    各一个用例。**这是第 8.2 节假设的判定器。**
-2. **距离**：`p>0` 且 Pauli-only（`p_leak=0`）下
-   `circuit.shortest_graphlike_error()` 的长度等于 `d`。d=3 与 d=5 各一个用例。
-   （DEM 必须是 graphlike，所以不能带 `leak_effect` 的 decode 变体。）
-3. **observable 数量**：`circuit.num_observables == 2`。
-4. **CX 层存在性**：CX 后第一轮之前恰好有一层 `d²` 个跨 patch 的 `CX`，
+2. **距离**：`p>0` 且 Pauli-only（`p_leak=0`）下最小不可探测逻辑错误的重量等于 `d`。
+
+   **不能用 `shortest_graphlike_error()`**——7.5 已论证本电路的 DEM 含 hyperedge，
+   该函数只看 ≤2 detector 的机制，会漏掉需要 hyperedge 的最小重量逻辑错误，
+   给出的距离可能偏大。
+
+   改用仓库里已有的 house 方法（`scripts/min_fault_weight_pauli.ipynb`）：
+   `flatten_dem_lines(circuit.detector_error_model(decompose_errors=False))`
+   拿到每个独立物理噪声机制的 `(detector 集合, logical 集合)`，
+   然后按重量递增搜索"合并后 detector 集合为空、logical 集合非空"的组合。
+   未分解的 DEM 天然包含 hyperedge 行，所以这个搜索是 hyperedge-safe 的。
+
+   组合爆炸的控制：穷举 `C(n, w)` 在 d=3、`rounds = 2d` 下的 `w ≤ 3` 是否可接受
+   需实测。若太慢，退到 `circuit.search_for_undetectable_logical_errors(...)`
+   （stim 自带、支持 degree > 2 的边），并在 d=3 最小配置下用穷举法交叉验证一次。
+   **这两条路都要在实现期实测确认，不要预设。**
+
+3. **hyperedge 可分解**：`circuit.detector_error_model(decompose_errors=True)`
+   不抛异常。7.5 论证了每个 4-detector 机制都能拆成两个电路中真实存在的
+   2-detector 机制，但这是论证不是验证，需要测试兜住。
+4. **observable 数量**：`circuit.num_observables == 2`。
+5. **CX 层存在性**：CX 后第一轮之前恰好有一层 `d²` 个跨 patch 的 `CX`，
    且两个 qubit index 分属两块 patch（`< index_shift` 与 `>= index_shift`）。
-5. **detector 形态**：CX 后第一轮里，patch 1 的 X detector 与 patch 2 的 Z
-   detector 是 3 项，其余是 2 项。
-6. **回归**：现有 `SurfaceCodeCircuitBuilder` / `WalkingSCCircuitBuilder`
+6. **detector 形态**：CX 后第一轮里，patch 1 的 X detector 与 patch 2 的 Z
+   detector 是 3 项（第三项是**配对 ancilla 在 CX 前那一轮**的记录），
+   其余是 2 项。
+7. **回归**：现有 `SurfaceCodeCircuitBuilder` / `WalkingSCCircuitBuilder`
    在相同参数下生成的电路与引入本次改动前**逐字节相同**——
    直接兑现第 2 节"只允许加入"的约束。
-7. **CX 层不重复**（6.1 的陷阱）：整个电路里跨 patch 的 CX 层**恰好出现一次**。
+8. **CX 层不重复**（6.1 的陷阱）：整个电路里跨 patch 的 CX 层**恰好出现一次**。
    失效模式是缓存重入把 CX 发两遍，且第二遍进了缓存——静默产生错误电路，
    必须有测试兜住。同时对 `p_leak > 0` 和 `p_leak = 0` 各测一次
    （后者才会走缓存路径）。
-8. **CX 后远端轮的 detector 正常**（7.5 的陷阱）：取 `rounds` 使
+9. **CX 后远端轮的 detector 正常**（7.6 的陷阱）：取 `rounds` 使
    `cx_round ≥ 2` 且存在 `rnd > cx_round + 1` 的轮次（如 walking d=3、
    `rounds = 8`，`cx_round = 4`），断言 round `cx_round + 2` 的 detector
    全是 2 项。失效模式是 walking 的 `rnd-2` 递归撞进 `cx_round`，
@@ -535,9 +598,15 @@ walking builder 没有 erasure swap 机制，此节不适用。
 
 ## 14. 未决与风险
 
-- **8.2 的 walking observable 形式**是本设计唯一的实质性未知。判定器现成
+- **8.2 的 walking observable 形式**是本设计的主要未知。判定器现成
   （stim 的确定性检查），若假设为假需按报错收窄，属于实现期的小幅迭代，
   不影响架构。
+- **距离搜索的可行性**（13 节第 2 条）：穷举未分解 DEM 行的组合是精确且
+  hyperedge-safe 的，但 `C(n, w)` 可能爆炸。实现期先实测 d=3 的规模，
+  再决定是否退到 `search_for_undetectable_logical_errors`。**不要预设哪条路可行。**
+- **hyperedge 的可分解性**（13 节第 3 条）：7.5 给的是论证不是验证。
+  若 `decompose_errors=True` 抛异常，说明存在无法拆成两个真实 2-detector
+  机制的 hyperedge，需要回头重新审视 detector 基的选择。
 - **walking 下 CX 时刻的活跃子晶格**：设计上用纯平移配对绕开了这个问题
   （5.5 节），但实现时需确认 `rounds // 2` 落点处两块 patch 确实同相位——
   两者同步推进，应当自动成立，测试 1 会覆盖。
