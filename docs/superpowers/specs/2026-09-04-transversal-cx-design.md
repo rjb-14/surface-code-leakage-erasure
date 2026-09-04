@@ -361,30 +361,59 @@ CX 层的 `DEPOLARIZE2` 在门**之后**施加（照 `make_stabilizer_gates` 的
 
 ### 7.6 实现
 
-mixin 覆盖 `_get_detector_text(rnd, basis)`，**并且必须自己把 `rnd` 归约到
-基类的周期取值，不能让基类的递归自己走**：
+mixin 覆盖 `define_detectors` 与 `_get_detector_text`，用一个**相位键**
+而不是 `rnd` 来选择 detector 形态：
 
 ```python
+_CX_PHASE = -1          # 基类的 _get_detector_text 只会收到 0,1,2,...
+
+def define_detectors(self, rnd, basis="Z"):
+    key = self._CX_PHASE if self._cx_detectors_active else rnd
+    self.circuit.append(self._get_detector_text(key, basis))
+
 def _get_detector_text(self, rnd, basis):
-    if rnd == self.cx_round:
-        return <特殊文本>
-    if rnd == 0:
-        return super()._get_detector_text(0, basis)
-    return super()._get_detector_text(1 + (rnd - 1) % 2, basis)
+    if rnd == self._CX_PHASE:
+        return self._cx_round_detector_text(basis)
+    return super()._get_detector_text(rnd, basis)
 ```
 
-**为什么不能直接 `super()._get_detector_text(rnd, basis)`**：
-`WalkingSCCircuitBuilder._get_detector_text` 对 `rnd > 2` 做
-`return self._get_detector_text(rnd - 2, basis)`，而 `self.` 会再次派发到
-**mixin 的覆盖版本**。若 `cx_round = 4`，查询 `rnd = 6` 会递归到 `rnd = 4`
-被 mixin 拦截，**把 CX 边界轮的特殊 detector 文本用到了一个普通轮上**。
-上面的归约把 `rnd ≥ 1` 一次性压到 `{1, 2}`（正是 walking 递归的收敛值），
-递归因此不会经过 `cx_round`。
+**为什么不能直接比较 `rnd == cx_round`**：`measure_stabilizers_no_leakage`
+重建缓存时会用 `rnd_eff` 当作 `rnd` 回调 `measure_stabilizers`，而
+`rnd_eff ∈ {0,1}`（static）或 `{0,1,2}`（walking）。`rounds ≤ 4` 时
+`cx_round = rounds // 2` 正好落进这个范围——walking 的 `rounds = 4` 给
+`cx_round = 2`，第 3 轮以 `rnd_eff = 2` 重建，会被误判成 CX 轮，
+**把 CX 层和特殊 detector 一起写进共享缓存条目**。
 
-static 侧同样适用：基类只用 `{0, 1}`，`1 + (rnd-1)%2 ∈ {1, 2}` 中的 `2`
-会被基类折叠回 `1`，行为不变。
+因此 `measure_stabilizers` 需要两道独立的闸：
 
-配对查找用 `self.layout.pair()`（第三个 rec 用配对 ancilla 的 `get_prev_meas`）。static 侧遍历 `self.x_plaquettes` / `self.z_plaquettes`
+1. `_in_round` 标志区分真实轮次与缓存重建的重入调用；
+2. CX 轮强制 `use_cache=False`（6.1），使该轮的 3 项 detector 不进共享缓存。
+
+两者不可互相替代。相位键 `_CX_PHASE = -1` 还顺带消除了 walking 的
+`rnd - 2` 递归撞进 CX 轮的问题：递归走 `6 → 4 → 2`，永远到不了负数键。
+
+**static 侧**直接遍历 `self.plaquettes`，按 `patch_of(plaquette.index)` 与
+`plaquette.type` 分流，交叉项用配对 ancilla 的 `get_prev_meas`。
+
+**walking 侧的分类是一个未解问题。** walking 的 detector 是 layout 预存的
+**索引元组**（`layout.detectors[rnd%2]`），不带类型也不带 patch 元数据，
+长度有 1/2/3 三种。已实测确认 `index_tuple[0]` **不能**用来判断 X/Z：
+`swap_time="early"` 下每一条都无法分类（`define_bulk_detectors` 中
+late 取 `plaq.ordered_data_qubits[0]`、early 取 `plaq.ancilla`，且元组被追加到
+`detectors[1-rnd]` 而非 `detectors[rnd]`）。
+
+实现前必须先确定分类办法。首选是**按位置反推**：
+`define_bulk_detectors` / `edge_detectors_*` 依次遍历
+`sorted(bulk_plaquettes[rnd])`、`sorted(trailing_plaquettes[rnd])`、
+`sorted(leading_plaquettes[rnd])` 并 `extend`，所以元组在列表中的位置与源
+plaquette 一一对应，按同样顺序重放即可打上类型标签。备选是用 stim 经验分类
+（只加 `Z_ERROR` 的电路里出现的 detector 即 X 型）。
+
+patch 归属则由位置给出：合并后 `detectors[r]` 是 patch 1 的列表 ++ patch 2 的列表，
+第 `k` 项与第 `k + half` 项互为平移像。
+
+配对查找：static 用 `self.layout.pair()` / `index ± index_shift`；
+walking 对整个元组做 `i ± index_shift`，取 `get_prev_meas`。static 侧遍历 `self.x_plaquettes` / `self.z_plaquettes`
 并按 patch 归属分流；walking 侧的 detector 是 layout 预存的索引元组，
 需要按 ancilla index 判断归属（`index < index_shift` 即 patch 1）并追加配对项。
 
@@ -583,7 +612,10 @@ walking builder 没有 erasure swap 机制，此节不适用。
 
 ## 14. 未决与风险
 
-- **8.2 的 walking observable 形式**是本设计的主要未知。判定器现成
+- **walking detector 元组的 X/Z 分类**（7.6）是本设计最大的未知。
+  已排除"看元组首元素"这条路；实现前必须先做调查，落定后回填本节与 7.6。
+  若首选与备选办法都不成立，需要重新考虑 walking 分支的可行性。
+- **8.2 的 walking observable 形式**是本设计的另一个主要未知。判定器现成
   （stim 的确定性检查），若假设为假需按报错收窄，属于实现期的小幅迭代，
   不影响架构。
 - **hyperedge 的可分解性**（13 节第 2 条）：7.5 给的是论证不是验证。
@@ -604,6 +636,11 @@ walking builder 没有 erasure swap 机制，此节不适用。
   未分解 DEM 枚举法，或 `search_for_undetectable_logical_errors`；
   组合规模需实测，且期望距离本身也待确认（hyperedge 机制一次打两块 patch，
   最小重量是否仍为 `d` 未论证）。
+- **CX 层上的 `skip gates` 系列 leak_effect**。`skip gates`、
+  `tailored then skip` 及其 decode 变体会把涉及泄漏比特的门从电路中删除；
+  transversal CX 少一对就改变了逻辑操作，且 7.2 的 detector 重映射假设
+  `d²` 对全部在场。本次实现遇到这些模型时抛 `NotImplementedError`，
+  只支持 `depolarize` 与 `tailored`。
 - 全部解码内容：`ErasureDecoder` / `ModifiedMLEDecoder` 对双 observable
   与跨 patch 超图的适配
 - `single_ec_traceback`（本次显式 `NotImplementedError`）
