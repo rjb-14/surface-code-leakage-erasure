@@ -1,7 +1,7 @@
 # 设计：两块 rotated surface code patch 之间的 transversal CNOT
 
 **日期：** 2026-09-04
-**状态：** 设计已确认，待实现
+**状态：** 设计已确认，待实现。距离验证不在本次范围内（见第 15 节）。
 **新增文件：** `src/surface_code_leakage_erasure/two_patch_layout.py`,
 `src/surface_code_leakage_erasure/transversal_cx.py`, `tests/test_transversal_cx.py`
 
@@ -351,7 +351,9 @@ CX 层的 `DEPOLARIZE2` 在门**之后**施加（照 `make_stabilizer_gates` 的
 因此：
 
 - **`shortest_graphlike_error()` 不是本电路的正确距离工具**，它只看 ≤2 detector
-  的机制，会漏掉需要 hyperedge 的最小重量逻辑错误。距离验证方案见第 13 节。
+  的机制，会漏掉需要 hyperedge 的最小重量逻辑错误。距离验证**本次范围外**
+  （见第 15 节），届时应改用仓库已有的未分解 DEM 枚举法
+  （`scripts/min_fault_weight_pauli.ipynb`）。
 - hyperedge 应当是**可分解**的（`decompose_errors=True`），因为每个 4-detector
   机制都能拆成两个电路中真实存在的 2-detector 机制。这一点需要测试确认
   （`detector_error_model(decompose_errors=True)` 不抛异常）。
@@ -555,40 +557,23 @@ walking builder 没有 erasure swap 机制，此节不适用。
 1. **确定性**：`p=0`、`p_leak=0` 下 `circuit.detector_error_model()` 不抛异常
    （detector 与 observable 均确定）。static / walking(late) / moonwalking(early)
    各一个用例。**这是第 8.2 节假设的判定器。**
-2. **距离**：`p>0` 且 Pauli-only（`p_leak=0`）下最小不可探测逻辑错误的重量等于 `d`。
-
-   **不能用 `shortest_graphlike_error()`**——7.5 已论证本电路的 DEM 含 hyperedge，
-   该函数只看 ≤2 detector 的机制，会漏掉需要 hyperedge 的最小重量逻辑错误，
-   给出的距离可能偏大。
-
-   改用仓库里已有的 house 方法（`scripts/min_fault_weight_pauli.ipynb`）：
-   `flatten_dem_lines(circuit.detector_error_model(decompose_errors=False))`
-   拿到每个独立物理噪声机制的 `(detector 集合, logical 集合)`，
-   然后按重量递增搜索"合并后 detector 集合为空、logical 集合非空"的组合。
-   未分解的 DEM 天然包含 hyperedge 行，所以这个搜索是 hyperedge-safe 的。
-
-   组合爆炸的控制：穷举 `C(n, w)` 在 d=3、`rounds = 2d` 下的 `w ≤ 3` 是否可接受
-   需实测。若太慢，退到 `circuit.search_for_undetectable_logical_errors(...)`
-   （stim 自带、支持 degree > 2 的边），并在 d=3 最小配置下用穷举法交叉验证一次。
-   **这两条路都要在实现期实测确认，不要预设。**
-
-3. **hyperedge 可分解**：`circuit.detector_error_model(decompose_errors=True)`
+2. **hyperedge 可分解**：`circuit.detector_error_model(decompose_errors=True)`
    不抛异常。7.5 论证了每个 4-detector 机制都能拆成两个电路中真实存在的
    2-detector 机制，但这是论证不是验证，需要测试兜住。
-4. **observable 数量**：`circuit.num_observables == 2`。
-5. **CX 层存在性**：CX 后第一轮之前恰好有一层 `d²` 个跨 patch 的 `CX`，
+3. **observable 数量**：`circuit.num_observables == 2`。
+4. **CX 层存在性**：CX 后第一轮之前恰好有一层 `d²` 个跨 patch 的 `CX`，
    且两个 qubit index 分属两块 patch（`< index_shift` 与 `>= index_shift`）。
-6. **detector 形态**：CX 后第一轮里，patch 1 的 X detector 与 patch 2 的 Z
+5. **detector 形态**：CX 后第一轮里，patch 1 的 X detector 与 patch 2 的 Z
    detector 是 3 项（第三项是**配对 ancilla 在 CX 前那一轮**的记录），
    其余是 2 项。
-7. **回归**：现有 `SurfaceCodeCircuitBuilder` / `WalkingSCCircuitBuilder`
+6. **回归**：现有 `SurfaceCodeCircuitBuilder` / `WalkingSCCircuitBuilder`
    在相同参数下生成的电路与引入本次改动前**逐字节相同**——
    直接兑现第 2 节"只允许加入"的约束。
-8. **CX 层不重复**（6.1 的陷阱）：整个电路里跨 patch 的 CX 层**恰好出现一次**。
+7. **CX 层不重复**（6.1 的陷阱）：整个电路里跨 patch 的 CX 层**恰好出现一次**。
    失效模式是缓存重入把 CX 发两遍，且第二遍进了缓存——静默产生错误电路，
    必须有测试兜住。同时对 `p_leak > 0` 和 `p_leak = 0` 各测一次
    （后者才会走缓存路径）。
-9. **CX 后远端轮的 detector 正常**（7.6 的陷阱）：取 `rounds` 使
+8. **CX 后远端轮的 detector 正常**（7.6 的陷阱）：取 `rounds` 使
    `cx_round ≥ 2` 且存在 `rnd > cx_round + 1` 的轮次（如 walking d=3、
    `rounds = 8`，`cx_round = 4`），断言 round `cx_round + 2` 的 detector
    全是 2 项。失效模式是 walking 的 `rnd-2` 递归撞进 `cx_round`，
@@ -601,10 +586,7 @@ walking builder 没有 erasure swap 机制，此节不适用。
 - **8.2 的 walking observable 形式**是本设计的主要未知。判定器现成
   （stim 的确定性检查），若假设为假需按报错收窄，属于实现期的小幅迭代，
   不影响架构。
-- **距离搜索的可行性**（13 节第 2 条）：穷举未分解 DEM 行的组合是精确且
-  hyperedge-safe 的，但 `C(n, w)` 可能爆炸。实现期先实测 d=3 的规模，
-  再决定是否退到 `search_for_undetectable_logical_errors`。**不要预设哪条路可行。**
-- **hyperedge 的可分解性**（13 节第 3 条）：7.5 给的是论证不是验证。
+- **hyperedge 的可分解性**（13 节第 2 条）：7.5 给的是论证不是验证。
   若 `decompose_errors=True` 抛异常，说明存在无法拆成两个真实 2-detector
   机制的 hyperedge，需要回头重新审视 detector 基的选择。
 - **walking 下 CX 时刻的活跃子晶格**：设计上用纯平移配对绕开了这个问题
@@ -617,6 +599,11 @@ walking builder 没有 erasure swap 机制，此节不适用。
 
 ## 15. 范围外（下一个 spec）
 
+- **距离验证**。用户已明确本次不做。届时不能用 `shortest_graphlike_error()`
+  （7.5：DEM 含 hyperedge），应改用 `scripts/min_fault_weight_pauli.ipynb` 的
+  未分解 DEM 枚举法，或 `search_for_undetectable_logical_errors`；
+  组合规模需实测，且期望距离本身也待确认（hyperedge 机制一次打两块 patch，
+  最小重量是否仍为 `d` 未论证）。
 - 全部解码内容：`ErasureDecoder` / `ModifiedMLEDecoder` 对双 observable
   与跨 patch 超图的适配
 - `single_ec_traceback`（本次显式 `NotImplementedError`）
