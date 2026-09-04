@@ -30,6 +30,11 @@ analysis = [
     "matplotlib",
 ]
 
+# test suite only; the core simulation does not need this
+dev = [
+    "pytest",
+]
+
 [tool.setuptools]
 packages = ["surface_code_leakage_erasure"]
 
