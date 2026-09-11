@@ -9,10 +9,20 @@ class WalkingSCCircuitBuilder(CircuitBuilder):
     # `swap_time="late"` builds the conventional walking surface code;
     # `swap_time="early"` builds the moonwalking surface code. Ignored when a
     # WalkingSurfaceCodeLayout is passed, which carries its own swap_time.
+    _supports_two_patch_layout = False
+    _supports_odd_rounds = False
 
     def __init__(self, d : int | WalkingSurfaceCodeLayout, swap_time: str = "late", seed = None):
         if isinstance(d, WalkingSurfaceCodeLayout):
             layout = d
+            if (
+                hasattr(layout, "x_logical_per_patch")
+                and not self._supports_two_patch_layout
+            ):
+                raise TypeError(
+                    "WalkingSCCircuitBuilder cannot build a two-patch layout; "
+                    "use EarlyWalkingTransversalCXBuilder instead."
+                )
             d = layout.d
             swap_time = layout.swap_time
         else:
@@ -225,7 +235,7 @@ class WalkingSCCircuitBuilder(CircuitBuilder):
     def get_circuit(
         self, rounds : int, p : float, p_leak : float = 0.0,
         leakage_circuit_locations : dict | None = None, use_cache = True, **circuit_kwargs):
-        if rounds % 2 != 0:
+        if rounds % 2 != 0 and not self._supports_odd_rounds:
             raise ValueError("Number of rounds must be even for walking surface code.")
 
         return super().get_circuit(

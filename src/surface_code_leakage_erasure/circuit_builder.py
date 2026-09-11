@@ -80,6 +80,24 @@ class CircuitBuilder(ABC):
         whose observable is rounds-independent should override this. """
         return (rounds, basis)
 
+    def _final_measurement_cache_key(self, p, Pauli_locations, basis):
+        """Return the cache key for a no-leakage final measurement."""
+        return (p, Pauli_locations, basis)
+
+    def _before_round_boundary(
+        self,
+        p,
+        boundary: int,
+        total_rounds: int,
+        *,
+        Pauli_locations: str,
+        basis: str,
+        ec_sched: int,
+        leak_effect: str,
+        leakage_circuit_locations: dict | None = None,
+    ):
+        """Emit optional operations at a boundary between SE rounds."""
+
     def single_plaquette_cnot_indexes(self, plaquette, t, reverse=False):
         dq = plaquette.ordered_data_qubits[t]
         if dq is None:
@@ -263,18 +281,27 @@ class CircuitBuilder(ABC):
             if leak_effect in ["skip gates", "tailored then skip"]:
                 extra_idling_qubits = []
                 to_remove = cnot_dict.keys() & self.leaked  # qubits that are involved in a gate and are leaked
-                str_idxs_to_remove = []
+                pair_indexes_to_remove = set()
                 for qubit in to_remove:
                     (other_qubit, idx_in_cnot, _) = cnot_dict[qubit]
-                    str_idxs_to_remove.append(8 * (idx_in_cnot//2))
+                    pair_indexes_to_remove.add(idx_in_cnot // 2)
                     extra_idling_qubits.extend([qubit, other_qubit])
 
-                str_idxs_to_remove.sort()
-                str_idxs_to_remove.insert(0, -8)
-                str_idxs_to_remove.append(None)
-                cnot_str = "".join(
-                    cnot_str[(str_idxs_to_remove[i]+8):str_idxs_to_remove[i+1]]
-                    for i in range(len(str_idxs_to_remove)-1))
+                # Rebuild from the structured pair table instead of slicing the
+                # fixed-width text.  The old eight-character slicing broke as
+                # soon as a two-patch qubit index reached three digits.
+                kept_pairs = []
+                for qubit, (other_qubit, idx_in_cnot, _) in cnot_dict.items():
+                    if idx_in_cnot % 2 != 0:
+                        continue
+                    if idx_in_cnot // 2 not in pair_indexes_to_remove:
+                        kept_pairs.append((idx_in_cnot // 2, qubit, other_qubit))
+                kept_pairs.sort()
+                cnot_str = " ".join(
+                    f"{index:3d}"
+                    for _, q0, q1 in kept_pairs
+                    for index in (q0, q1)
+                )
 
                 if len(idling_qubits_str) > 0:
                     # add idling qubits from skipped gates iff there were already idling qubits (i.e. we are including idling noise)
@@ -420,11 +447,17 @@ class CircuitBuilder(ABC):
     # @profile
     def final_measurement_no_leakage(self, p, Pauli_locations : str, basis : str = "Z"):
 
-        if (p, Pauli_locations, basis) in self._no_leakage_final_circuit_cache:
-            circuit_text = self._no_leakage_final_circuit_cache[(p, Pauli_locations, basis)]
+        cache_key = self._final_measurement_cache_key(
+            p,
+            Pauli_locations,
+            basis,
+        )
+
+        if cache_key in self._no_leakage_final_circuit_cache:
+            circuit_text = self._no_leakage_final_circuit_cache[cache_key]
             self.circuit.append(circuit_text)
             if self._track_measurements:
-                measurement_list = self._no_leakage_final_meas_list_cache[(p, Pauli_locations, basis)]
+                measurement_list = self._no_leakage_final_meas_list_cache[cache_key]
                 self.tracker.add_measurement_list(measurement_list)
 
         else:  # extract the circuit for cache
@@ -435,10 +468,10 @@ class CircuitBuilder(ABC):
                 p, Pauli_locations, basis, use_cache=False)
 
             circuit_text = "\n".join(self.circuit[circuit_starting_len:])
-            self._no_leakage_final_circuit_cache[(p, Pauli_locations, basis)] = circuit_text
+            self._no_leakage_final_circuit_cache[cache_key] = circuit_text
 
             measurement_list = self.tracker.measurement_list[tracker_starting_len:]
-            self._no_leakage_final_meas_list_cache[(p, Pauli_locations, basis)] = measurement_list
+            self._no_leakage_final_meas_list_cache[cache_key] = measurement_list
 
         return set()  # no erasure checks since no leakage
 
@@ -533,8 +566,20 @@ class CircuitBuilder(ABC):
         observable_key = self._observable_cache_key(rounds, circuit_kwargs["basis"])
         self._track_measurements = observable_key not in self._built_observable_keys
 
-        # rounds
-        for rnd in range(rounds):
+        # Round boundaries include the positions before round 0 and after the
+        # final round.  Most builders emit nothing there; logical-gate builders
+        # can use the hook for an inter-round operation without tying it to a
+        # following syndrome-extraction round.
+        for rnd in range(rounds + 1):
+            self._before_round_boundary(
+                p,
+                rnd,
+                rounds,
+                **circuit_kwargs,
+                leakage_circuit_locations=leakage_circuit_locations.get(rnd, {}),
+            )
+            if rnd == rounds:
+                break
             ec_round = self.measure_stabilizers(
                 p, rnd, **circuit_kwargs,
                 leakage_circuit_locations=leakage_circuit_locations.get(rnd, {}),

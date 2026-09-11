@@ -65,6 +65,75 @@ result = sampler.sample_LER(
 print(result.num_samples, result.failures_marginal)
 ```
 
+### Early-walking transversal CNOT
+
+The dedicated builder below prepares two identical `swap_time="early"`
+patches in the X basis, runs the requested syndrome-extraction rounds before
+and after a transversal CX from patch 1 to patch 2, and then performs X
+readout:
+
+```python
+from surface_code_leakage_erasure import EarlyWalkingTCNOTBuilder
+
+builder = EarlyWalkingTCNOTBuilder(3, seed=0)
+circuit, _ = builder.get_circuit(
+    rounds_per_side=3,
+    p=1e-3,
+    Pauli_locations="2-qubit gates",
+)
+circuit.detector_error_model()  # verifies detector/observable determinism
+```
+
+`rounds_per_side` is the backwards-compatible symmetric form. To choose the
+two sides independently, omit it and provide both keyword-only counts:
+
+```python
+circuit, _ = builder.get_circuit(
+    rounds_before=0,
+    rounds_after=3,
+    p=1e-3,
+)
+```
+
+Both counts must be non-negative integers, odd and even values are supported,
+and only `rounds_before=rounds_after=0` is rejected. Thus both `0/N` and `N/0`
+are valid for `N >= 1`. The builder places the tCNOT on the active walking
+sublattice, closes the initial detector boundary specially for `0/N`, and
+closes the final detector boundary across the tCNOT for `N/0`.
+
+Observable 0 tracks the propagated control X logical
+(`X_control * X_target`), and observable 1 tracks the target X logical.
+Leakage injection and Tesseract decoding are described below; a dedicated tCNOT
+sampler is intentionally deferred.
+
+For a logical Bell-correlation experiment, use the mixed-preparation builder.
+It initializes the control patch in the X basis and the target patch in the Z
+basis. The `basis` argument selects the common final readout basis and the one
+tracked correlation observable:
+
+```python
+from surface_code_leakage_erasure import EarlyWalkingTCNOTBellBuilder
+
+builder = EarlyWalkingTCNOTBellBuilder(3, seed=0)
+
+xx_circuit, _ = builder.get_circuit(
+    rounds_per_side=3,
+    p=1e-3,
+    basis="X",  # Observable 0 is X_L1 * X_L2.
+)
+zz_circuit, _ = builder.get_circuit(
+    rounds_per_side=3,
+    p=1e-3,
+    basis="Z",  # Observable 0 is Z_L1 * Z_L2.
+)
+
+assert xx_circuit.num_observables == 1
+assert zz_circuit.num_observables == 1
+```
+
+The XX and ZZ correlations require separate circuits because the final data
+measurements use incompatible bases.
+
 ### The PyMatching fork
 
 **This package will not work with PyMatching from PyPI.**
@@ -195,6 +264,79 @@ These are substituted automatically when detector error models are built — pas
 > **`pfail` is not the LER.** These fields are the probability that a *whole
 > shot* fails — `failures / num_samples` — not a per-round rate. To get a
 > logical error rate per round, divide by `rounds`. 
+
+## Early-walking transversal CNOT leakage decoding
+
+The original early-walking tCNOT builder uses two X-initialized patches, one
+transversal physical CX, and two tracked X logical observables. The Bell builder
+uses X/Z initialization and one tracked XX or ZZ correlation. Leakage at the
+transversal layer is represented by `builder.TCX_STEP`; it is detected by the
+next check selected by `ec_sched`, or by final data readout when the tCNOT is
+the final boundary.
+
+Install the optional hypergraph decoder with `pip install -e ".[tesseract]"`.
+The decoder keeps each undecomposed Stim error mechanism as a full hyperedge,
+including its logical-observable effects. It accepts both the original
+two-observable builder and the one-observable Bell builder. Its round arguments
+must match the builder: use either `rounds_per_side`, or both `rounds_before`
+and `rounds_after`.
+
+```python
+import stim
+from tesseract_decoder import tesseract
+from surface_code_leakage_erasure import (
+    EarlyWalkingTCNOTBuilder,
+    EarlyWalkingTCNOTDecoder,
+    TesseractHyperedgeDecoder,
+)
+
+rounds_per_side = 2
+builder = EarlyWalkingTCNOTBuilder(3, seed=0)
+builder.get_circuit(rounds_per_side, 0)
+leaked_qubit = builder._transversal_pairs()[0][0]
+
+# The physical circuit really skips gates involving the leaked qubit.
+physical, erasure_checks = builder.get_circuit(
+    rounds_per_side,
+    1e-3,
+    leakage_circuit_locations={
+        rounds_per_side: {builder.TCX_STEP: {leaked_qubit}}
+    },
+    ec_sched=4,
+    leak_effect="skip gates",
+    use_cache=False,
+)
+
+simulator = stim.FlipSimulator(batch_size=1, seed=1)
+simulator.do(physical)
+syndrome = simulator.get_detector_flips(bit_packed=False)[:, 0]
+
+backend = TesseractHyperedgeDecoder(
+    det_beam=tesseract.INF_DET_BEAM,
+)
+decoder = EarlyWalkingTCNOTDecoder(
+    builder,
+    rounds_per_side,
+    p_pauli=1e-3,
+    hyperedge_decoder=backend,
+    circuit_kwargs={"ec_sched": 4, "leak_effect": "skip gates"},
+)
+
+# Shape (2,): propagated control-X observable, then target-X observable.
+prediction = decoder.decode(syndrome, erasure_checks)
+
+# Quasi-MLE returns (marginal_prediction, valid_prediction_or_none).
+marginal, valid = decoder.decode(
+    syndrome,
+    erasure_checks,
+    decoder_strategy="quasi_mle",
+    decoder_args={"max_nodes": 256, "mle_time_limit": 1.0},
+)
+```
+
+The physical skip-gate circuit is for sampling. The decoder independently
+rebuilds its corresponding Pauli-envelope circuit; it never requests graphlike
+DEM decomposition.
 
 ## Known issues
 

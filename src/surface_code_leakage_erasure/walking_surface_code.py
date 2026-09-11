@@ -529,11 +529,16 @@ class WalkingSurfaceCodeLayout(SurfaceCodeLayout):
 
         return [final_detectors_z, final_detectors_x]
 
-    def final_detectors_early_swap(self):
+    def final_detectors_early_swap(self, last_round_phase: int = 1):
+        """Return early-walking final detectors after the requested phase."""
+        if last_round_phase not in (0, 1):
+            raise ValueError("last_round_phase must be 0 or 1.")
         final_detectors_z = []
         final_detectors_x = []
 
-        for plaq in sorted(self.plaquettes[1] - self.leakage_plaquettes):
+        for plaq in sorted(
+            self.plaquettes[last_round_phase] - self.leakage_plaquettes
+        ):
             qlist = [q.index for q in plaq.ordered_data_qubits if q is not None]
             qlist.append(plaq.ancilla.index)
             if plaq.type == 'Z':

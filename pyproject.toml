@@ -35,6 +35,13 @@ dev = [
     "pytest",
 ]
 
+# Hypergraph decoding for transversal logical gates. Kept optional so ordinary
+# circuit construction and the existing PyMatching decoder do not require the
+# platform-specific Tesseract wheel.
+tesseract = [
+    "tesseract-decoder==0.1.1.dev20260807211955",
+]
+
 [tool.setuptools]
 packages = ["surface_code_leakage_erasure"]
 
