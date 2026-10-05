@@ -18,6 +18,7 @@ from .walking_circuit_builder import (
 
 from .two_patch_layout import (
     TwoPatchEarlyWalkingLayout,
+    TwoPatchEarlyWalkingStabilityLayout,
     TwoPatchMoonwalkingLayout,
 )
 
@@ -37,6 +38,10 @@ from .tcnot_decoder import (
     hyperedge_model_to_dem,
 )
 
+from .tcnot_sampler import (
+    TCNOTSampler,
+)
+
 from .stability_circuit import (
     StabilityLayout,
     StabilityCircuitBuilder,
@@ -48,6 +53,11 @@ from .walking_stability_circuit import (
 
 from .walking_stability_builder import (
     WalkingStabilityCircuitBuilder,
+)
+
+from .early_walking_stability_transversal_cx import (
+    EarlyWalkingStabilityTransversalCXBuilder,
+    EarlyWalkingStabilityTCNOTBuilder,
 )
 
 from .tracker import (
@@ -74,6 +84,7 @@ __all__ = [
     "SurfaceCodeLayout",
     "WalkingSurfaceCodeLayout",
     "TwoPatchEarlyWalkingLayout",
+    "TwoPatchEarlyWalkingStabilityLayout",
     "TwoPatchMoonwalkingLayout",
     "StabilityLayout",
     "WalkingStabilityCircuitLayout",
@@ -87,11 +98,14 @@ __all__ = [
     "EarlyWalkingTCNOTDecoder",
     "TCNOTDecoder",
     "TesseractHyperedgeDecoder",
+    "TCNOTSampler",
     "Hyperedge",
     "dem_to_hyperedge_model",
     "hyperedge_model_to_dem",
     "StabilityCircuitBuilder",
     "WalkingStabilityCircuitBuilder",
+    "EarlyWalkingStabilityTransversalCXBuilder",
+    "EarlyWalkingStabilityTCNOTBuilder",
     # Tracker
     "MeasurementTracker",
     # Erasure decoder

@@ -51,29 +51,26 @@ def resolve_tcnot_round_schedule(
     return TCNOTRoundSchedule(rounds_before, rounds_after)
 
 
-class EarlyWalkingTransversalCXBuilder(WalkingSCCircuitBuilder):
-    """Build an X-basis transversal-CNOT experiment.
+class _EarlyWalkingTransversalCXMixin:
+    """Shared early-walking transversal-CNOT circuit mechanics.
 
-    Patch 1 is the control and patch 2 is the target. Syndrome-extraction round
-    counts can be symmetric through ``rounds_per_side`` or independently set
-    through ``rounds_before`` and ``rounds_after``. Observable 0 tracks the
-    propagated control X logical
-    (X_control * X_target), and observable 1 tracks the target X logical.
-
-    Leakage uses the ordinary walking round/step representation, with
-    :attr:`TCX_STEP` reserved for the transversal layer at ``cx_round``.
+    Concrete builders supply a compatible two-patch layout and experiment-
+    specific initialization/observable behavior through their walking base
+    class and method overrides.
     """
 
     _supports_two_patch_layout = True
     _supports_odd_rounds = True
+    _layout_type = TwoPatchEarlyWalkingLayout
     _CX_DETECTOR_CACHE_TAG = "transversal-cx-boundary"
     TCX_STEP = -1
 
-    def __init__(self, d: int | TwoPatchEarlyWalkingLayout, seed=None):
+    def __init__(self, d, seed=None):
+        layout_type = self._layout_type
         layout = (
             d
-            if isinstance(d, TwoPatchEarlyWalkingLayout)
-            else TwoPatchEarlyWalkingLayout(d)
+            if isinstance(d, layout_type)
+            else layout_type(d)
         )
         super().__init__(layout, seed=seed)
         self.rounds_per_side = None
@@ -690,6 +687,23 @@ class EarlyWalkingTransversalCXBuilder(WalkingSCCircuitBuilder):
                 cumulative += count
 
         return result
+
+
+class EarlyWalkingTransversalCXBuilder(
+    _EarlyWalkingTransversalCXMixin,
+    WalkingSCCircuitBuilder,
+):
+    """Build an X-basis transversal-CNOT experiment.
+
+    Patch 1 is the control and patch 2 is the target. Syndrome-extraction round
+    counts can be symmetric through ``rounds_per_side`` or independently set
+    through ``rounds_before`` and ``rounds_after``. Observable 0 tracks the
+    propagated control X logical
+    (X_control * X_target), and observable 1 tracks the target X logical.
+
+    Leakage uses the ordinary walking round/step representation, with
+    :attr:`TCX_STEP` reserved for the transversal layer at ``cx_round``.
+    """
 
 
 class EarlyWalkingTransversalCXBellBuilder(EarlyWalkingTransversalCXBuilder):

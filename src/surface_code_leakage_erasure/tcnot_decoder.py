@@ -212,9 +212,14 @@ def _backtrack_cover(remaining_rows, uncovered, row_unions):
 class TesseractHyperedgeDecoder:
     """Adapter from :class:`HyperedgeModel` to Tesseract's Python decoder."""
 
-    def __init__(self, compile_cache_size: int | None = 128, **config_options):
+    def __init__(
+        self,
+        compile_cache_size: int | None = 128,
+        det_order_options: Mapping | None = None,
+        **config_options,
+    ):
         try:
-            from tesseract_decoder import tesseract
+            from tesseract_decoder import tesseract, utils as tesseract_utils
         except ImportError as error:
             raise ImportError(
                 "TesseractHyperedgeDecoder requires the optional tesseract-decoder "
@@ -222,10 +227,71 @@ class TesseractHyperedgeDecoder:
             ) from error
         if compile_cache_size is not None and compile_cache_size < 0:
             raise ValueError("compile_cache_size must be non-negative or None.")
+        if det_order_options is not None and "det_orders" in config_options:
+            raise ValueError("Pass either det_order_options or det_orders, not both.")
         self._tesseract = tesseract
+        self._tesseract_utils = tesseract_utils
         self.config_options = dict(config_options)
+        self.det_order_options = self._validate_det_order_options(det_order_options)
         self.compile_cache_size = compile_cache_size
         self._compile = lru_cache(maxsize=compile_cache_size)(self._compile)
+
+    def _validate_det_order_options(self, options: Mapping | None) -> dict | None:
+        """Validate the JSON-serializable per-DEM detector-order recipe."""
+        if options is None:
+            return None
+        options = dict(options)
+        unknown = set(options) - {"num_det_orders", "method"}
+        if unknown:
+            raise ValueError(
+                f"Unknown det_order_options: {sorted(unknown)}. "
+                "Supported: 'num_det_orders', 'method'."
+            )
+        if set(options) != {"num_det_orders", "method"}:
+            raise ValueError(
+                "det_order_options requires 'num_det_orders' and 'method'."
+            )
+        num_det_orders = options["num_det_orders"]
+        if (
+            isinstance(num_det_orders, bool)
+            or not isinstance(num_det_orders, int)
+            or num_det_orders < 1
+        ):
+            raise ValueError(
+                "det_order_options.num_det_orders must be a positive integer."
+            )
+        method_name = options["method"]
+        if not isinstance(method_name, str):
+            raise ValueError(
+                "det_order_options.method must be a DetectorOrderMethod name."
+            )
+        try:
+            self._resolve_det_order_method(method_name)
+        except AttributeError as error:
+            raise ValueError(
+                f"Unknown DetectorOrderMethod {method_name!r}."
+            ) from error
+        return {"num_det_orders": num_det_orders, "method": method_name}
+
+    def _resolve_det_order_method(self, method_name: str):
+        """Resolve detector-order enum names across Tesseract Python APIs."""
+        detector_order_method = getattr(
+            self._tesseract_utils, "DetectorOrderMethod", None
+        )
+        if detector_order_method is not None and hasattr(
+            detector_order_method, method_name
+        ):
+            return getattr(detector_order_method, method_name)
+
+        det_order = getattr(self._tesseract_utils, "DetOrder", None)
+        legacy_name = {
+            "Index": "DetIndex",
+            "BFS": "DetBFS",
+            "Coordinate": "DetCoordinate",
+        }.get(method_name, method_name)
+        if det_order is not None and hasattr(det_order, legacy_name):
+            return getattr(det_order, legacy_name)
+        raise AttributeError(method_name)
 
     @staticmethod
     def _model_key(model: Mapping[Hyperedge, float]) -> tuple:
@@ -246,9 +312,19 @@ class TesseractHyperedgeDecoder:
             for detectors, observables, probability in model_key
         }
         dem = hyperedge_model_to_dem(model, num_detectors, num_observables)
+        config_options = dict(self.config_options)
+        if self.det_order_options is not None:
+            method = self._resolve_det_order_method(
+                self.det_order_options["method"]
+            )
+            config_options["det_orders"] = self._tesseract_utils.build_det_orders(
+                dem=dem,
+                num_det_orders=self.det_order_options["num_det_orders"],
+                method=method,
+            )
         return self._tesseract.TesseractConfig(
             dem=dem,
-            **self.config_options,
+            **config_options,
         ).compile_decoder()
 
     def cache_info(self):

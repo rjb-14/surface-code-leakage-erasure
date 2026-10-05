@@ -7,6 +7,7 @@ back into the original layout.
 """
 
 from .surface_code import Coord, DataQubit, Plaquette, Qubit
+from .walking_stability_circuit import WalkingStabilityCircuitLayout
 from .walking_surface_code import WalkingSurfaceCodeLayout
 
 
@@ -220,8 +221,8 @@ def shift_and_merge(layout, coord_shift: Coord, index_shift: int):
 def early_walking_detector_check_types(layout) -> list[list[str]]:
     """Return the X/Z type corresponding to each early detector tuple.
 
-    ``WalkingSurfaceCodeLayout.detectors`` stores only measurement-index
-    tuples.  Replaying the fixed append order used by
+    The early walking surface-code and stability layouts store only
+    measurement-index tuples in ``detectors``.  Replaying the fixed append order used by
     ``define_bulk_detectors`` and ``edge_detectors_early_swap`` recovers the
     source plaquette, and therefore the check type.
     """
@@ -332,6 +333,55 @@ class TwoPatchEarlyWalkingLayout(WalkingSurfaceCodeLayout):
                 translated_indexes.append(target.index)
             translated.append(tuple(translated_indexes))
         return tuple(translated)
+
+
+class TwoPatchEarlyWalkingStabilityLayout(WalkingStabilityCircuitLayout):
+    """Two translated early-walking stability-circuit patches."""
+
+    def __init__(self, d):
+        super().__init__(d, swap_time="early")
+
+    def define_layout(self, swap_time):
+        super().define_layout(swap_time)
+        single_patch_detector_types = early_walking_detector_check_types(self)
+
+        shift_and_merge(
+            self,
+            coord_shift=Coord(2 * self.d + 2, 0),
+            index_shift=len(self.qubits),
+        )
+        self.detector_check_types = [
+            types + types for types in single_patch_detector_types
+        ]
+
+    def pair(self, qubit_or_index):
+        """Return the corresponding qubit in the other stability patch."""
+
+        index = (
+            qubit_or_index.index
+            if isinstance(qubit_or_index, Qubit)
+            else int(qubit_or_index)
+        )
+        if index < 0 or index >= 2 * self.index_shift:
+            raise ValueError(f"Qubit index {index} is outside the two-patch layout.")
+        paired_index = (
+            index + self.index_shift
+            if index < self.index_shift
+            else index - self.index_shift
+        )
+        return self.index_to_qubit[paired_index]
+
+    def patch_of(self, qubit_or_index) -> int:
+        """Return 1 for the control patch and 2 for the target patch."""
+
+        index = (
+            qubit_or_index.index
+            if isinstance(qubit_or_index, Qubit)
+            else int(qubit_or_index)
+        )
+        if index < 0 or index >= 2 * self.index_shift:
+            raise ValueError(f"Qubit index {index} is outside the two-patch layout.")
+        return 1 if index < self.index_shift else 2
 
 
 # Backwards-compatible terminology used in the earlier design notes.

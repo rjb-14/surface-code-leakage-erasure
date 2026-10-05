@@ -39,7 +39,7 @@ dev = [
 # circuit construction and the existing PyMatching decoder do not require the
 # platform-specific Tesseract wheel.
 tesseract = [
-    "tesseract-decoder==0.1.1.dev20260807211955",
+    "tesseract-decoder==0.1.1.dev20260822020007",
 ]
 
 [tool.setuptools]
