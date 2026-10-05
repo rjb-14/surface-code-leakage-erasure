@@ -200,9 +200,9 @@ def _as_round_pairs(
 
 
 def _as_probability_tuple(values: Sequence[float]) -> tuple[float, ...]:
-    if not values:
-        raise ValueError("P_LEAK_LIST must not be empty.")
     converted = tuple(float(value) for value in values)
+    if not converted:
+        raise ValueError("P_LEAK_LIST must not be empty.")
     for value in converted:
         if not math.isfinite(value) or not 0 <= value <= 1:
             raise ValueError("P_LEAK_LIST values must be finite and in [0, 1].")
