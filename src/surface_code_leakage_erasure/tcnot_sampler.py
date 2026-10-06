@@ -110,7 +110,8 @@ def _make_decoder(
 
 def _get_worker_decoder(
     *,
-    builder,
+    builder_type,
+    builder_layout,
     decoder_key: str,
     rounds_per_side: int | None,
     rounds_before: int | None,
@@ -126,6 +127,7 @@ def _get_worker_decoder(
         _decoder_cache.move_to_end(decoder_key)
         return decoder
 
+    builder = builder_type(builder_layout)
     decoder = _make_decoder(
         builder=builder,
         rounds_per_side=rounds_per_side,
@@ -185,7 +187,8 @@ def _batched_tcnot_samples(
     *,
     batch_size: int,
     p_leak: float,
-    builder,
+    builder_type,
+    builder_layout,
     seed: np.random.SeedSequence,
     decoder_key: str,
     rounds_per_side: int | None,
@@ -202,7 +205,8 @@ def _batched_tcnot_samples(
     simulator_rng = np.random.default_rng(simulator_seed)
     if decoder is None:
         decoder = _get_worker_decoder(
-            builder=builder,
+            builder_type=builder_type,
+            builder_layout=builder_layout,
             decoder_key=decoder_key,
             rounds_per_side=rounds_per_side,
             rounds_before=rounds_before,
@@ -228,7 +232,8 @@ def _batched_tcnot_samples(
 def _batched_tcnot_baseline_samples(
     *,
     batch_size: int,
-    builder,
+    builder_type,
+    builder_layout,
     seed: np.random.SeedSequence,
     decoder_key: str,
     rounds_per_side: int | None,
@@ -241,7 +246,8 @@ def _batched_tcnot_baseline_samples(
     tesseract_options: Mapping,
 ) -> tuple[int, int]:
     decoder = _get_worker_decoder(
-        builder=builder,
+        builder_type=builder_type,
+        builder_layout=builder_layout,
         decoder_key=decoder_key,
         rounds_per_side=rounds_per_side,
         rounds_before=rounds_before,
@@ -315,6 +321,12 @@ class TCNOTSampler:
             raise ValueError("TCNOTSampler requires builder leak_effect='skip gates'.")
 
         self.builder = builder
+        # Builder instances install functools.cache wrappers on bound methods.
+        # Those wrappers are not pickleable by loky/cloudpickle, so workers
+        # receive the importable builder type and plain layout and construct
+        # their own process-local builder instead of receiving this instance.
+        self._worker_builder_type = type(builder)
+        self._worker_builder_layout = builder.layout
         self.rounds_per_side = rounds_per_side
         self.rounds_before = rounds_before
         self.rounds_after = rounds_after
@@ -404,7 +416,8 @@ class TCNOTSampler:
             delayed(_batched_tcnot_samples)(
                 batch_size=batch_size,
                 p_leak=p_leak,
-                builder=self.builder,
+                builder_type=self._worker_builder_type,
+                builder_layout=self._worker_builder_layout,
                 seed=child_seed,
                 decoder_key=self._decoder_key,
                 rounds_per_side=self.rounds_per_side,
@@ -467,7 +480,8 @@ class TCNOTSampler:
         results = self.parallel(
             delayed(_batched_tcnot_baseline_samples)(
                 batch_size=batch_size,
-                builder=self.builder,
+                builder_type=self._worker_builder_type,
+                builder_layout=self._worker_builder_layout,
                 seed=child_seed,
                 decoder_key=self._decoder_key,
                 rounds_per_side=self.rounds_per_side,
