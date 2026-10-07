@@ -17,6 +17,13 @@ from .tcnot_decoder import EarlyWalkingTCNOTDecoder, TesseractHyperedgeDecoder
 
 
 _WORKER_DECODER_CACHE_SIZE = 1
+# Keep several independently scheduled chunks available per worker.  A d=7
+# long-beam decode has a strongly variable per-shot runtime; dispatching exactly
+# one chunk per worker makes every outer sampling round wait at a barrier for
+# its slowest shot while the other workers sit idle.  Four queued chunks per
+# worker is enough to let loky dynamically rebalance that tail without making
+# MAX_ERRORS stopping or CSV checkpoints excessively coarse.
+_PARALLEL_TASKS_PER_WORKER = 4
 _decoder_cache: OrderedDict[str, EarlyWalkingTCNOTDecoder] = OrderedDict()
 TESSERACT_DECODER_VERSION = "0.1.1.dev20260822020007"
 
@@ -147,6 +154,20 @@ def _get_worker_decoder(
 
 def _stim_seed(seed: np.random.SeedSequence) -> int:
     return int(seed.generate_state(1, dtype=np.uint64)[0])
+
+
+def _parallel_task_count(*, n_jobs: int, max_shots: int) -> int:
+    """Return a bounded oversubscribed task count for dynamic load balancing."""
+    if max_shots <= 0:
+        return 0
+    multiplier = _PARALLEL_TASKS_PER_WORKER if n_jobs > 1 else 1
+    return min(max_shots, n_jobs * multiplier)
+
+
+def _parallel_window_size(n_jobs: int) -> int:
+    """Minimum outer sampling window that keeps parallel workers supplied."""
+    multiplier = _PARALLEL_TASKS_PER_WORKER if n_jobs > 1 else 1
+    return n_jobs * multiplier
 
 
 def _single_tcnot_sample(
@@ -405,7 +426,10 @@ class TCNOTSampler:
                 f"p_leak must be in (0, 1], got {p_leak}."
             )
 
-        n_batches = min(self.n_jobs, max_shots)
+        # Queue more tasks than workers so a process finishing a cheap leakage
+        # pattern can immediately take another task instead of waiting at a
+        # one-task-per-worker barrier for the slowest Tesseract decode.
+        n_batches = _parallel_task_count(n_jobs=self.n_jobs, max_shots=max_shots)
         quotient, remainder = divmod(max_shots, n_batches)
         batch_sizes = [
             quotient + (1 if index < remainder else 0)
@@ -534,7 +558,8 @@ class TCNOTSampler:
         p_noleak = (1 - p_leak) ** self.num_leakage_trials
         n_fails = 0
         n_done = 0
-        batch_shots = self.n_jobs
+        min_batch_shots = _parallel_window_size(self.n_jobs)
+        batch_shots = min_batch_shots
         target_batch_seconds = 1.0
 
         while n_done < max_shots and not (
@@ -557,8 +582,8 @@ class TCNOTSampler:
             if on_batch is not None:
                 on_batch(batch_fails, batch_done)
 
-            if batch_shots > self.n_jobs and elapsed > target_batch_seconds * 1.3:
-                batch_shots = max(self.n_jobs, batch_shots // 2)
+            if batch_shots > min_batch_shots and elapsed > target_batch_seconds * 1.3:
+                batch_shots = max(min_batch_shots, batch_shots // 2)
             for _ in range(4):
                 if elapsed > target_batch_seconds * 0.3:
                     break

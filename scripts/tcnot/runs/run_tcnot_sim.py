@@ -35,7 +35,7 @@ if str(REPO_ROOT / "src") not in sys.path:
 
 EXPERIMENTS = ("memory", "stability")
 
-MEMORY_D_LIST = [3]
+MEMORY_D_LIST = [3, 5, 7]
 MEMORY_ROUNDS_MODE = "match_distance"
 MEMORY_R_LIST = [3, 5, 7]
 MEMORY_DETECTORS = "both"
@@ -45,7 +45,7 @@ STABILITY_ROUNDS_MODE = "explicit"
 STABILITY_ROUND_PAIRS = [(3, 0), (4, 0), (5, 0)]
 STABILITY_OBSERVABLE_SELECTION = "both"
 
-P_LEAK_LIST = [0.001]
+P_LEAK_LIST = np.logspace(np.log10(2e-3), np.log10(2e-1), 21)
 BIAS = float("inf")
 
 DECODER_STRATEGY = "marginal"
