@@ -1,4 +1,4 @@
-"""Incremental CSV collection and resumability for the marginal tCNOT sampler."""
+"""Incremental Sinter CSV collection for tCNOT and single-patch stability."""
 
 from __future__ import annotations
 
@@ -35,14 +35,20 @@ def _strong_id(
     p_leak: float,
     decoder: str,
     json_metadata: Any,
+    decoder_args: dict | None = None,
 ) -> str:
+    identity = {
+        "circuit": str(circuit),
+        "p_leak": p_leak,
+        "decoder": decoder,
+        "json_metadata": json_metadata,
+    }
+    # Preserve existing marginal tCNOT IDs; include search options for samplers
+    # that explicitly support additional decoder strategies.
+    if decoder_args:
+        identity["decoder_args"] = decoder_args
     payload = json.dumps(
-        {
-            "circuit": str(circuit),
-            "p_leak": p_leak,
-            "decoder": decoder,
-            "json_metadata": json_metadata,
-        },
+        identity,
         separators=(",", ":"),
         sort_keys=True,
     )
@@ -79,13 +85,18 @@ def collect(
     decoder_args: dict | None = None,
     print_progress: bool = False,
 ) -> Fit:
-    """Collect one marginal task, appending Sinter rows and resuming prior work."""
-    if decoder_strategy != "marginal":
-        raise ValueError("tCNOT collection supports decoder_strategy='marginal' only.")
-    if decoder != "marginal":
-        raise ValueError("tCNOT collection requires decoder='marginal'.")
-    if decoder_args:
-        raise ValueError("decoder_args are not accepted for marginal tCNOT collection.")
+    """Collect one task, appending Sinter rows and resuming prior work.
+
+    Additional decoder strategies require an explicit sampler capability; the
+    tCNOT sampler continues to accept marginal decoding only.
+    """
+    supported = getattr(sampler, "supported_decoder_strategies", ("marginal",))
+    if decoder_strategy not in supported:
+        raise ValueError(f"Sampler collection supports decoder strategies {supported} only.")
+    if decoder != decoder_strategy:
+        raise ValueError("decoder must match decoder_strategy.")
+    if decoder_strategy == "marginal" and decoder_args:
+        raise ValueError("decoder_args are not accepted for marginal collection.")
     for name, value in (
         ("max_shots", max_shots),
         ("max_errors", max_errors),
@@ -104,6 +115,7 @@ def collect(
         p_leak,
         decoder,
         json_metadata,
+        decoder_args,
     )
     prior_errors, prior_shots = _prior_stats(save_path, strong_id)
     remaining_shots = max(max_shots - prior_shots, 0)
@@ -128,11 +140,13 @@ def collect(
             pass
 
     started = time.perf_counter()
+    last_checkpoint = started
     running_shots = prior_shots
     running_errors = prior_errors
 
     def on_batch(batch_errors: int, batch_shots: int) -> None:
-        nonlocal running_errors, running_shots
+        nonlocal running_errors, running_shots, last_checkpoint
+        now = time.perf_counter()
         if save_path is not None:
             stat = TaskStats(
                 strong_id=strong_id,
@@ -141,12 +155,13 @@ def collect(
                 shots=batch_shots,
                 errors=batch_errors,
                 discards=0,
-                seconds=time.perf_counter() - started,
+                seconds=now - last_checkpoint,
             )
             with save_path.open("a", encoding="utf8") as file:
                 file.write(stat.to_csv_line() + "\n")
         running_errors += batch_errors
         running_shots += batch_shots
+        last_checkpoint = now
         if print_progress:
             elapsed = time.perf_counter() - started
             rate = running_errors / running_shots if running_shots else 0.0
