@@ -55,7 +55,8 @@ DECODER_STRATEGY = "marginal"
 LEAKAGE_EFFECT = "skip_gate"
 LEAKAGE_GRANULARITY = "per_gate"
 
-MAX_SHOTS = 10_000_000
+# Stop each point when either its shot cap or its error target is reached.
+MAX_SHOTS = 1_000_000
 MAX_ERRORS = 100
 MIN_SHOTS = 0
 SEED = None

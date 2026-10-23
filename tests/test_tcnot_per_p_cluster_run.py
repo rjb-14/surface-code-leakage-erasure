@@ -36,6 +36,7 @@ def test_defaults_produce_21_distinct_d7_memory_jobs():
     groups = RUN.build_task_groups(cfg)
 
     assert cfg.experiments == ("memory",)
+    assert (cfg.max_shots, cfg.max_errors, cfg.min_shots) == (1_000_000, 100, 0)
     assert len(groups) == 21
     assert all(len(group) == 1 for group in groups)
     assert len({group[0] for group in groups}) == 21
@@ -71,7 +72,7 @@ def test_every_memory_and_stability_point_gets_its_own_job(bias):
 
 
 @pytest.mark.parametrize("seed", [None, 123])
-def test_d7_physics_seeds_and_budgets_match_original_sweep(seed):
+def test_d7_physics_and_seeds_match_original_sweep(seed):
     cfg = replace(RUN.configured_run(), seed=seed)
     original = replace(LEGACY.configured_run(), seed=seed)
     previous = {
@@ -82,8 +83,8 @@ def test_d7_physics_seeds_and_budgets_match_original_sweep(seed):
     }
     assert cfg.run_tag != original.run_tag
     assert RUN._output_directory(cfg) != LEGACY._output_directory(original)
-    assert (cfg.max_shots, cfg.max_errors, cfg.min_shots) == (
-        original.max_shots, original.max_errors, original.min_shots
+    assert (cfg.max_errors, cfg.min_shots) == (
+        original.max_errors, original.min_shots
     )
 
     for (task,) in RUN.build_task_groups(cfg):

@@ -93,6 +93,22 @@ MAX_CONCURRENT_TASKS=2 ./scripts/tcnot/runs/submit_tcnot_per_p.sh
 
 The supplemental run writes separate CSVs under `data/tcnot/runs/<RUN_TAG>/`.
 Resubmitting the new version resumes its own CSVs; old sweep CSVs are not used.
+Each point stops at 100 errors or 1,000,000 shots, whichever is reached first.
+These limits include prior results in that point's supplemental CSV. Changing
+only the limits preserves the run identity and resumes the same file.
+
+For the old data used by `tcnot_foliation_vs_early_walking_memory.pdf`, d=7
+early-walking tasks 1-12 already have at least 100 errors. To supplement only
+the remaining points, keep the full probability grid and select tasks 13-21
+from the repository root:
+
+```bash
+mkdir -p slurm
+sbatch --array=13-21 --cpus-per-task=8 scripts/tcnot/runs/submit_tcnot_per_p.sh
+```
+
+The selection is based on that old CSV snapshot; check for newer completed
+points before submitting. Wait for any running job for the same point to finish.
 
 The per-p driver uses `StreamingTCNOTSampler`. It keeps a persistent pool with
 8 worker processes and up to 16 submitted chunks, normally one shot per chunk.
