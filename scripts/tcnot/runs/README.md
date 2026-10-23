@@ -94,6 +94,47 @@ MAX_CONCURRENT_TASKS=2 ./scripts/tcnot/runs/submit_tcnot_per_p.sh
 The supplemental run writes separate CSVs under `data/tcnot/runs/<RUN_TAG>/`.
 Resubmitting the new version resumes its own CSVs; old sweep CSVs are not used.
 
+The per-p driver uses `StreamingTCNOTSampler`. It keeps a persistent pool with
+8 worker processes and up to 16 submitted chunks, normally one shot per chunk.
+A completed chunk immediately frees a slot for more work, without waiting for
+the other chunks. Circuit/layout configuration is sent once per worker and the
+worker retains its decoder. The original driver and sampler remain available.
+
+CSV updates combine completed results after 32 shots or approximately one
+second, whichever comes first; workers continue computing during parent-side
+CSV writes. Reaching `MAX_ERRORS` stops new submissions, then drains all work
+already submitted, including slow shots. The total shot budget includes queued
+work, so `MAX_SHOTS` is still a hard cap. The error target can be exceeded by
+the bounded amount of outstanding work, as with the previous batched sampler.
+
+If Slurm supplies `SLURM_JOB_END_TIME`, the scheduler stops submitting 60 seconds
+before that projected end time and drains/checkpoints its pending work. It may
+exit normally with a partially collected budget; the log says to resubmit the
+point, and the same CSV is resumed next time. This reduces hard-timeout losses
+but cannot guarantee completion of an arbitrarily long native decode before
+Slurm kills a job.
+
+Logs include `scheduler=streaming` at startup and a `[stream]` summary every
+30 seconds. Its `worker_cpu` value is the sum of measured worker task CPU time
+divided by allocated worker core-walltime; initialization and parent-process CPU
+are excluded, so use `jobstats` for Slurm's overall utilization. The circuit,
+noise, decoder settings, output metadata and existing task IDs are preserved.
+The timing-dependent random sample sequence is different; it is not a bitwise
+replay of the old sampler.
+
+For a cluster comparison, wait for any previous job for that probability to
+finish, then submit the same one-point test with the new code. Do not run two
+jobs writing the same point CSV concurrently. Compare both `jobstats` CPU
+utilization and new shots per second over several minutes at the same core
+count; a local benchmark does not establish cluster performance.
+
+One local pilot used d=7, rounds=7, p_leak=0.0100237446725, 8 workers and 128
+shots with the production long-beam options. Sampling took 29.00 s with the
+original path (4.41 shots/s) and 19.95 s with streaming (6.42 shots/s); streaming
+task CPU utilization was 91.9%. The two samplers consume different random sample
+sequences, so this small test is evidence for the scheduling change, not a
+paired statistical benchmark or a promised cluster speedup.
+
 The supplemental CSVs can later be combined with the old data after checking
 that the physical model and decoder options match. Sum errors and accepted shots
 for each matching physical point, then calculate the combined error rate; do not

@@ -561,8 +561,8 @@ def _build_sampler(
     from surface_code_leakage_erasure import (
         EarlyWalkingStabilityTCNOTBuilder,
         EarlyWalkingTCNOTBuilder,
-        TCNOTSampler,
     )
+    from surface_code_leakage_erasure.tcnot_streaming_sampler import StreamingTCNOTSampler
 
     common = {
         "p_pauli": p_pauli,
@@ -575,13 +575,13 @@ def _build_sampler(
         "leakage_granularity": config.leakage_granularity,
     }
     if task.experiment == "memory":
-        return TCNOTSampler(
+        return StreamingTCNOTSampler(
             builder=EarlyWalkingTCNOTBuilder(task.d, seed=point_seed),
             rounds_per_side=task.rounds,
             circuit_kwargs={"basis": "X"},
             **common,
         )
-    return TCNOTSampler(
+    return StreamingTCNOTSampler(
         builder=EarlyWalkingStabilityTCNOTBuilder(task.d, seed=point_seed),
         rounds_before=task.rounds_before,
         rounds_after=task.rounds_after,
@@ -620,7 +620,7 @@ def _run_group(
             f"experiment={task.experiment} d={task.d} {detail} "
             f"p_leak={task.p_leak:.12g} bias={config.bias_label} "
             f"decoder=marginal tesseract={config.tesseract_version} "
-            f"preset={config.tesseract_preset} workers={n_jobs}",
+            f"preset={config.tesseract_preset} workers={n_jobs} scheduler=streaming",
             flush=True,
         )
         collect(
