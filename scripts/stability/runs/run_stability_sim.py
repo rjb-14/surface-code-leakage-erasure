@@ -43,6 +43,8 @@ BIAS = float("inf")
 
 # Uses the repository's erasure-aware PyMatching fork, not Tesseract.
 DECODER_STRATEGY = "marginal"  # "marginal" or "quasi_mle"
+# quasi_mle saves both quasi_mle and marginal results from the same shots.
+# Shot/error budgets use quasi_mle; choose a new RUN_TAG for older quasi_mle runs.
 # quasi_mle defaults: {"mle_time_limit": None, "max_queue_size": 4096}.
 # This is the existing branch-and-bound search, with marginal fallback when no
 # valid solution is found. It is not the reference repo's brute_force mode.
@@ -239,7 +241,7 @@ def build_task_groups(config):
 
 
 def _identity(config):
-    return {
+    identity = {
         "schema_version": 1,
         "experiment": "stability",
         "styles": list(config.styles),
@@ -263,6 +265,11 @@ def _identity(config):
         "decoder_cache_size": config.decoder_cache_size,
         "run_tag": config.run_tag,
     }
+    if config.decoder_strategy == "quasi_mle":
+        # Older quasi_mle runs did not retain marginal counts and cannot resume
+        # into paired statistics. Marginal-only identities remain unchanged.
+        identity.update(schema_version=2, recorded_decoders=["quasi_mle", "marginal"])
+    return identity
 
 
 def _output_directory(config):

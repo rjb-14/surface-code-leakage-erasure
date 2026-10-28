@@ -147,7 +147,7 @@ def _ensure_leakage_edges(context, model, checks):
 
 def _leakage_batch(model, p_leak, shots, strategy, args):
     context = _worker_context(model)
-    failures = 0
+    failures = marginal_failures = 0
     for _ in range(shots):
         locations = context.builder.generate_leakage_locations(
             model.rounds, p_leak, atleast_1=True, leak_locations="2-qubit gates"
@@ -173,11 +173,14 @@ def _leakage_batch(model, p_leak, shots, strategy, args):
         )
         # Match the existing sample_LER convention when search finds no valid
         # solution within its time/queue budget.
-        prediction = (
-            valid if strategy == "quasi_mle" and valid is not None else marginal
+        marginal_error = int(np.any(marginal != truth))
+        marginal_failures += marginal_error
+        failures += (
+            int(np.any(valid != truth))
+            if strategy == "quasi_mle" and valid is not None
+            else marginal_error
         )
-        failures += int(np.any(prediction != truth))
-    return failures, shots
+    return failures, marginal_failures, shots
 
 
 class StabilitySampler:
@@ -189,6 +192,7 @@ class StabilitySampler:
     """
 
     supported_decoder_strategies = DECODER_STRATEGIES
+    paired_marginal_strategies = ("quasi_mle",)
 
     def __init__(
         self, *, style, distance, rounds, p_pauli=0.0, n_jobs=1, cache_size=4096
@@ -242,8 +246,20 @@ class StabilitySampler:
         on_batch=None,
         decoder_strategy="marginal",
         decoder_args=None,
+        on_paired_batch=None,
     ):
+        """Return selected-strategy failures/shots, optionally reporting both.
+
+        With quasi_mle, on_paired_batch receives (selected_errors,
+        marginal_errors, shots) from the same shots. Error stopping and the
+        existing two-argument on_batch callback use the selected strategy.
+        """
         args = resolve_decoder_args(decoder_strategy, decoder_args)
+        if (
+            on_paired_batch is not None
+            and decoder_strategy not in self.paired_marginal_strategies
+        ):
+            raise ValueError("on_paired_batch requires quasi_mle decoding.")
         if not math.isfinite(p_leak) or not 0 <= p_leak <= 1:
             raise ValueError("p_leak must be finite and in [0, 1].")
         for name, value in (
@@ -276,6 +292,8 @@ class StabilitySampler:
             n_leak = int(self.rng.binomial(shots, p_any_leak))
             started = time.perf_counter()
             batch_failures = self._without_leakage(shots - n_leak)
+            # Both strategies use the same Pauli-only prediction on these shots.
+            batch_marginal_failures = batch_failures
             if n_leak:
                 chunks = min(n_leak, window)
                 quotient, remainder = divmod(n_leak, chunks)
@@ -289,12 +307,15 @@ class StabilitySampler:
                     )
                     for index in range(chunks)
                 )
-                for count, _ in results:
+                for count, marginal_count, _ in results:
                     batch_failures += count
+                    batch_marginal_failures += marginal_count
             failures += batch_failures
             done += shots
             if on_batch is not None:
                 on_batch(batch_failures, shots)
+            if on_paired_batch is not None:
+                on_paired_batch(batch_failures, batch_marginal_failures, shots)
             elapsed = time.perf_counter() - started
             if elapsed < 0.3:
                 batch_size = min(batch_size * 2, 65536)

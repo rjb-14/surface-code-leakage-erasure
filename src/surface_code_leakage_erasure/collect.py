@@ -71,6 +71,21 @@ def _fit(shots: int, errors: int) -> Fit:
     )
 
 
+def _paired_marginal_metadata(json_metadata, decoder, decoder_args):
+    metadata = (
+        dict(json_metadata)
+        if isinstance(json_metadata, dict)
+        else {"source_metadata": json_metadata}
+    )
+    metadata.update(
+        decoder_strategy="marginal",
+        decoder_args=None,
+        paired_with=decoder,
+        paired_decoder_args=decoder_args,
+    )
+    return metadata
+
+
 def collect(
     *,
     sampler: TCNOTSamplerProtocol,
@@ -88,7 +103,9 @@ def collect(
     """Collect one task, appending Sinter rows and resuming prior work.
 
     Additional decoder strategies require an explicit sampler capability; the
-    tCNOT sampler continues to accept marginal decoding only.
+    tCNOT sampler continues to accept marginal decoding only. Samplers declaring
+    paired_marginal_strategies also append marginal rows from the same shots.
+    Budgets and the returned fit always use the selected strategy.
     """
     supported = getattr(sampler, "supported_decoder_strategies", ("marginal",))
     if decoder_strategy not in supported:
@@ -118,6 +135,25 @@ def collect(
         decoder_args,
     )
     prior_errors, prior_shots = _prior_stats(save_path, strong_id)
+    paired_marginal = decoder_strategy in getattr(
+        sampler, "paired_marginal_strategies", ()
+    )
+    prior_marginal_errors = 0
+    if paired_marginal:
+        marginal_metadata = _paired_marginal_metadata(
+            json_metadata, decoder, decoder_args
+        )
+        marginal_id = _strong_id(
+            sampler.baseline_circuit, p_leak, "marginal", marginal_metadata
+        )
+        prior_marginal_errors, marginal_shots = _prior_stats(save_path, marginal_id)
+        if marginal_shots != prior_shots:
+            raise ValueError(
+                "Cannot resume paired quasi_mle/marginal results with unequal shot counts "
+                f"({prior_shots} quasi_mle, {marginal_shots} marginal). "
+                "Older quasi_mle-only CSVs cannot supply the missing marginal results; "
+                "use a new RUN_TAG or save_file."
+            )
     remaining_shots = max(max_shots - prior_shots, 0)
     remaining_errors = (
         max(max_errors - prior_errors, 0) if max_errors > 0 else 0
@@ -143,9 +179,10 @@ def collect(
     last_checkpoint = started
     running_shots = prior_shots
     running_errors = prior_errors
+    running_marginal_errors = prior_marginal_errors
 
-    def on_batch(batch_errors: int, batch_shots: int) -> None:
-        nonlocal running_errors, running_shots, last_checkpoint
+    def on_batch(batch_errors: int, batch_shots: int, marginal_errors=None) -> None:
+        nonlocal running_errors, running_shots, running_marginal_errors, last_checkpoint
         now = time.perf_counter()
         if save_path is not None:
             stat = TaskStats(
@@ -157,17 +194,39 @@ def collect(
                 discards=0,
                 seconds=now - last_checkpoint,
             )
+            lines = stat.to_csv_line() + "\n"
+            if paired_marginal:
+                marginal_stat = TaskStats(
+                    strong_id=marginal_id,
+                    decoder="marginal",
+                    json_metadata=marginal_metadata,
+                    shots=batch_shots,
+                    errors=marginal_errors,
+                    discards=0,
+                    # Sampling/decoding time is already charged to the primary row.
+                    seconds=0,
+                )
+                lines += marginal_stat.to_csv_line() + "\n"
+            # Append the pair together to keep checkpoints aligned on interruption.
             with save_path.open("a", encoding="utf8") as file:
-                file.write(stat.to_csv_line() + "\n")
+                file.write(lines)
         running_errors += batch_errors
         running_shots += batch_shots
+        if paired_marginal:
+            running_marginal_errors += marginal_errors
         last_checkpoint = now
         if print_progress:
             elapsed = time.perf_counter() - started
             rate = running_errors / running_shots if running_shots else 0.0
+            marginal_progress = (
+                f" marginal_errors={running_marginal_errors} "
+                f"marginal_rate={running_marginal_errors / running_shots:.3e}"
+                if paired_marginal and running_shots
+                else ""
+            )
             print(
                 f"[collect] shots={running_shots}/{max_shots} "
-                f"errors={running_errors} rate={rate:.3e} elapsed={elapsed:.1f}s",
+                f"errors={running_errors} rate={rate:.3e}{marginal_progress} elapsed={elapsed:.1f}s",
                 file=sys.stderr,
             )
 
@@ -180,13 +239,22 @@ def collect(
         sample_shot_cap = remaining_min_shots
         remaining_errors = 0
 
+    callbacks = {"on_batch": None}
+    if save_path is not None or print_progress:
+        if paired_marginal:
+            callbacks["on_paired_batch"] = lambda errors, marginal_errors, shots: on_batch(
+                errors, shots, marginal_errors
+            )
+        else:
+            callbacks["on_batch"] = on_batch
+
     new_errors, new_shots = sampler.sample(
         p_leak=p_leak,
         max_shots=sample_shot_cap,
         max_errors=remaining_errors,
         min_shots=remaining_min_shots,
-        on_batch=on_batch if (save_path is not None or print_progress) else None,
         decoder_strategy=decoder_strategy,
         decoder_args=decoder_args,
+        **callbacks,
     )
     return _fit(prior_shots + new_shots, prior_errors + new_errors)
