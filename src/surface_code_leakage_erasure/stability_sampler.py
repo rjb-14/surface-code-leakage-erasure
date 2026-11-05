@@ -20,6 +20,7 @@ from .decoding import ErasureDecoder, require_pymatching_edge_reweights
 from .stability_circuit import StabilityCircuitBuilder
 from .walking_stability_builder import WalkingStabilityCircuitBuilder
 from .early_walking_x_stability_builder import EarlyWalkingXStabilityCircuitBuilder
+from .late_walking_x_stability_builder import LateWalkingXStabilityCircuitBuilder
 
 
 STYLES = ("static", "early", "late")
@@ -74,7 +75,11 @@ class _Context:
     def __init__(self, model):
         self.circuit_kwargs = {**CIRCUIT_KWARGS, "basis": model.stability_experiment.upper()}
         if model.stability_experiment == "x":
-            self.builder = EarlyWalkingXStabilityCircuitBuilder(model.distance)
+            builder_class = (
+                EarlyWalkingXStabilityCircuitBuilder if model.style == "early"
+                else LateWalkingXStabilityCircuitBuilder
+            )
+            self.builder = builder_class(model.distance)
         elif model.style == "static":
             self.builder = StabilityCircuitBuilder(model.distance)
         else:
@@ -166,7 +171,7 @@ class StabilitySampler:
     """Sample Z/X-basis stability using erasure-aware PyMatching.
 
     Z preserves the original static/early/late experiment. X selects the
-    clipped-corner early circuit with final Z-check-parity observable.
+    clipped-corner early/late circuits with final Z-check-parity observable.
     Leakage is one Bernoulli trial per CNOT, choosing one of its qubits uniformly.
     Finite-bias Pauli noise is uniform DEPOLARIZE2 after two-qubit gates only.
     quasi_mle uses the existing bounded branch-and-bound search, not brute force.
@@ -184,8 +189,8 @@ class StabilitySampler:
         stability_experiment = stability_experiment.lower()
         if style not in STYLES:
             raise ValueError(f"style must be one of {STYLES}.")
-        if stability_experiment == "x" and style != "early":
-            raise ValueError("X-basis stability currently requires style='early'.")
+        if stability_experiment == "x" and style not in ("early", "late"):
+            raise ValueError("X-basis stability requires style='early' or 'late'.")
         for name, value in (
             ("distance", distance),
             ("rounds", rounds),

@@ -5,7 +5,7 @@ resumable workflow corresponding to `10_interleaved_stability.py` in
 `biased-noise-qec` and this repository's `run_tcnot_sim.py`. They use this
 repository's **single-patch** stability circuits, with no transversal logical
 gate. The original Z-basis experiment supports static / early / late; the new
-X-basis experiment uses the clipped-corner early-walking circuit.
+X-basis experiment supports clipped-corner early/late walking circuits.
 
 ## Setup
 
@@ -31,8 +31,8 @@ Edit the configuration block in `run_stability_sim.py`:
 - `STABILITY_EXPERIMENT="z"` (default) or `"x"`. Names refer to **data
   preparation/readout basis**: Z preserves the original experiment with final
   X-check parity; X uses the new circuit with final **Z-check parity**.
-- `STYLES`: any subset of `("static", "early", "late")` for Z. X currently
-  requires `STYLES=("early",)`; static/late X combinations are rejected.
+- `STYLES`: any subset of `("static", "early", "late")` for Z. X supports
+  `("early",)`, `("late",)`, or both; static X is rejected.
 - `D_LIST`: positive even distances.
 - `ROUNDS_MODE="explicit"`: full `STYLES × D_LIST × R_LIST × P_LEAK_LIST`
   sweep. With `"match_distance"`, use `rounds=d` for each distance instead.
@@ -70,8 +70,8 @@ For the new X-basis experiment, either edit the configuration block:
 
 ```python
 STABILITY_EXPERIMENT = "x"
-STYLES = ("early",)
-RUN_TAG = "stability_x_early_leak_only_marginal"
+STYLES = ("late",)  # or ("early", "late")
+RUN_TAG = "stability_x_late_leak_only_marginal"
 ```
 
 or override the experiment and styles from the command line:
@@ -79,21 +79,25 @@ or override the experiment and styles from the command line:
 ```bash
 conda run --no-capture-output -n surface-leakage \
   python scripts/stability/runs/run_stability_sim.py \
-  --stability-experiment x --style early --dry-run
+  --stability-experiment x --style late --dry-run
 
 # After lowering the configured budgets for a local pilot:
 conda run --no-capture-output -n surface-leakage \
   python scripts/stability/runs/run_stability_sim.py \
-  --stability-experiment x --style early --task-index 1
+  --stability-experiment x --style late --task-index 1
 
 # On the cluster login node; arguments are forwarded to every array worker:
 ./scripts/stability/runs/submit_stability.sh \
-  --stability-experiment x --style early
+  --stability-experiment x --style late
+
+# Submit both walking styles under a new RUN_TAG:
+./scripts/stability/runs/submit_stability.sh \
+  --stability-experiment x --style early late
 ```
 
 `--stability-experiment` accepts `x/X` and `z/Z`; `--style` accepts one or more
-styles. X requires only `early`. The new X circuit preserves the d=2 special
-geometry and clips the four data corners at d>=4. Both marginal and quasi-MLE,
+styles. X supports `early` and `late`. Both X circuits preserve the d=2 special
+geometry and clip the four data corners at d>=4. Both marginal and quasi-MLE,
 leakage-only and finite-bias sampling use the selected experiment.
 
 Set `CONDA_ENV=another-name` when using a different environment. The wrapper
@@ -102,7 +106,8 @@ worker outside Slurm. Leakage-only runs group the full probability sweep by
 `(style, d, rounds)` to reuse circuits and decoder caches. Finite-bias runs use
 one physical point per shard. The checked-in configuration (early/late, d=4,
 rounds=3/5/7, 21 probabilities) has **126 physical points in 6 shards**.
-Selecting X with `--style early` gives **63 physical points in 3 shards** for
+Selecting X with `--style early` or `--style late` gives **63 physical points
+in 3 shards**; `--style early late` gives **126 points in 6 shards** for
 the same distances, rounds, and probabilities. Finite bias still gives one
 physical point per shard.
 
@@ -150,19 +155,24 @@ fresh randomness.
 
 Each shard appends batch statistics to its own Sinter CSV. Original Z results
 stay under `data/stability/runs/<RUN_TAG>/`; X results use
-`data/stability/runs/x/<RUN_TAG>/` and an additional `_x_early_` filename label.
+`data/stability/runs/x/<RUN_TAG>/` and an additional `_x_early_` or `_x_late_`
+filename label.
 The output directory also contains
 `identity.json`; incompatible configurations under the same tag are rejected.
 Z Slurm logs retain `slurm/<RUN_TAG>-<array job>_<array index>.out` and `.err`;
 X logs use `slurm/x_<RUN_TAG>-<array job>_<array index>.out` and `.err`.
 
 X manifests/CSV metadata explicitly record `stability_experiment="x"`,
-`basis="X"`, `mode="walking"`, `swap_time="early"`, the clipped-corner
-geometry, and `observable="final_regular_z_check_parity"`. Original Z manifest
+`basis="X"`, `mode="walking"`, the clipped-corner geometry, and
+`observable="final_regular_z_check_parity"`. CSV rows record their actual
+`swap_time="early"` or `"late"` and corresponding builder. A manifest covering
+both styles uses `swap_time="mixed"`; single-style manifests use that style.
+Choose a new `RUN_TAG` when adding late to an existing early-only sweep.
+Existing X early-only identities remain compatible. Original Z manifest
 schemas and CSV identities remain unchanged, so existing Z runs can resume;
 legacy metadata without `stability_experiment` retains its original Z meaning.
-The worker cache key includes the experiment, preventing the two geometries
-from sharing builders or decoder caches.
+The worker cache key includes the experiment and walking style, preventing
+different circuits from sharing builders or decoder caches.
 
 For `quasi_mle`, every batch writes two rows, distinguished by the CSV `decoder`
 column (`quasi_mle` and `marginal`). The marginal row's metadata records

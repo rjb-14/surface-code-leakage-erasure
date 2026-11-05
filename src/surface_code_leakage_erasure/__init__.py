@@ -18,6 +18,8 @@ from .walking_circuit_builder import (
 
 from .early_walking_x_stability_circuit import EarlyWalkingXStabilityCircuitLayout
 from .early_walking_x_stability_builder import EarlyWalkingXStabilityCircuitBuilder
+from .late_walking_x_stability_circuit import LateWalkingXStabilityCircuitLayout
+from .late_walking_x_stability_builder import LateWalkingXStabilityCircuitBuilder
 
 from .two_patch_layout import (
     TwoPatchEarlyWalkingLayout,
@@ -92,6 +94,7 @@ __all__ = [
     "StabilityLayout",
     "WalkingStabilityCircuitLayout",
     "EarlyWalkingXStabilityCircuitLayout",
+    "LateWalkingXStabilityCircuitLayout",
     # circuit builders
     "SurfaceCodeCircuitBuilder",
     "WalkingSCCircuitBuilder",
@@ -109,6 +112,7 @@ __all__ = [
     "StabilityCircuitBuilder",
     "WalkingStabilityCircuitBuilder",
     "EarlyWalkingXStabilityCircuitBuilder",
+    "LateWalkingXStabilityCircuitBuilder",
     "EarlyWalkingStabilityTransversalCXBuilder",
     "EarlyWalkingStabilityTCNOTBuilder",
     # Tracker

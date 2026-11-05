@@ -33,8 +33,8 @@ if str(REPO_ROOT / "src") not in sys.path:
 # Select any subset of ("static", "early", "late"). All require even distance.
 STYLES = ("early", "late")
 # Names denote data preparation/readout basis. X selects the new clipped-corner
-# Z-check-parity experiment and requires STYLES=("early",).
-STABILITY_EXPERIMENT = "z"  # "z" (original) or "x" (early only)
+# Z-check-parity experiment and supports early/late walking.
+STABILITY_EXPERIMENT = "z"  # "z" (original) or "x" (early/late)
 D_LIST = [4]
 ROUNDS_MODE = "explicit"  # "explicit": D x R; "match_distance": rounds=d
 R_LIST = [3, 5, 7]
@@ -145,8 +145,8 @@ def configured_run(*, stability_experiment=None, styles=None):
         raise ValueError(
             f"STYLES must be a non-empty, unique subset of {SUPPORTED_STYLES}."
         )
-    if experiment == "x" and styles != ("early",):
-        raise ValueError("X-basis stability currently requires STYLES=('early',) / --style early.")
+    if experiment == "x" and any(style not in ("early", "late") for style in styles):
+        raise ValueError("X-basis stability requires early and/or late styles.")
     d_list = _integers("D_LIST", D_LIST)
     if any(d % 2 for d in d_list):
         raise ValueError("Every D must be positive and even for stability.")
@@ -287,7 +287,7 @@ def _identity(config):
             stability_experiment="x",
             basis="X",
             mode="walking",
-            swap_time="early",
+            swap_time=config.styles[0] if len(config.styles) == 1 else "mixed",
             observable="final_regular_z_check_parity",
             geometry="clipped_corners_d2_special",
         )
@@ -342,7 +342,7 @@ def _metadata(config, task, p_pauli):
         metadata.pop(key)
     metadata.update(
         circuit=(
-            "EarlyWalkingXStabilityCircuitBuilder"
+            f"{task.style.capitalize()}WalkingXStabilityCircuitBuilder"
             if config.stability_experiment == "x"
             else "StabilityCircuitBuilder"
             if task.style == "static"
@@ -355,6 +355,8 @@ def _metadata(config, task, p_pauli):
         p=p_pauli,
         p_leak=task.p_leak,
     )
+    if config.stability_experiment == "x":
+        metadata["swap_time"] = task.style
     return metadata
 
 
@@ -425,10 +427,10 @@ def _parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--stability-experiment", type=str.lower, choices=("z", "x"),
-        help="Data preparation/readout basis: z preserves the original experiment; x requires --style early.",
+        help="Data preparation/readout basis: z preserves the original experiment; x supports early/late.",
     )
     parser.add_argument("--style", dest="styles", nargs="+", choices=SUPPORTED_STYLES,
-                        help="Override STYLES; x stability supports early only.")
+                        help="Override STYLES; x stability supports early and/or late.")
     parser.add_argument("--print-num-shards", action="store_true")
     parser.add_argument("--print-run-tag", action="store_true")
     parser.add_argument("--print-job-name", action="store_true")

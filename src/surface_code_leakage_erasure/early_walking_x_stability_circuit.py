@@ -8,6 +8,7 @@ from numbers import Integral
 
 from .surface_code import Coord, DataQubit, Plaquette, Qubit
 from .walking_stability_circuit import WalkingStabilityCircuitLayout
+from .x_stability_geometry import reference_x_stability_geometry
 
 
 class EarlyWalkingXStabilityCircuitLayout(WalkingStabilityCircuitLayout):
@@ -23,31 +24,7 @@ class EarlyWalkingXStabilityCircuitLayout(WalkingStabilityCircuitLayout):
         self.define_layout()
 
     def define_layout(self):
-        d = self.d
-        corners = set() if d == 2 else {
-            Coord(1, 1), Coord(2*d-1, 1),
-            Coord(1, 2*d-1), Coord(2*d-1, 2*d-1),
-        }
-        data = {
-            Coord(x, y) for x in range(1, 2*d, 2) for y in range(1, 2*d, 2)
-        } - corners
-        checks = {}
-        for x in range(0, 2*d+1, 2):
-            for y in range(0, 2*d+1, 2):
-                a = Coord(x, y)
-                support = frozenset(a + delta for delta in self.Z_DELTAS) & data
-                if d == 2:
-                    if a not in {Coord(2, 0), Coord(0, 2), Coord(2, 2),
-                                 Coord(4, 2), Coord(2, 4)}:
-                        continue
-                    check_type = "X" if a == Coord(2, 2) else "Z"
-                else:
-                    interior = 0 < x < 2*d and 0 < y < 2*d
-                    odd = ((x-y)//2) % 2 == 1
-                    if len(support) < 2 or (not interior and odd):
-                        continue
-                    check_type = "X" if interior and odd else "Z"
-                checks[a] = (check_type, support)
+        data, checks = reference_x_stability_geometry(self.d)
 
         self.reference_data_coords = frozenset(data)
         self.reference_checks = checks
