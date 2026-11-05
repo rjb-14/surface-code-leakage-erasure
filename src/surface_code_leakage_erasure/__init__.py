@@ -16,6 +16,9 @@ from .walking_circuit_builder import (
     WalkingSCCircuitBuilder,
 )
 
+from .early_walking_x_stability_circuit import EarlyWalkingXStabilityCircuitLayout
+from .early_walking_x_stability_builder import EarlyWalkingXStabilityCircuitBuilder
+
 from .two_patch_layout import (
     TwoPatchEarlyWalkingLayout,
     TwoPatchEarlyWalkingStabilityLayout,
@@ -88,6 +91,7 @@ __all__ = [
     "TwoPatchMoonwalkingLayout",
     "StabilityLayout",
     "WalkingStabilityCircuitLayout",
+    "EarlyWalkingXStabilityCircuitLayout",
     # circuit builders
     "SurfaceCodeCircuitBuilder",
     "WalkingSCCircuitBuilder",
@@ -104,6 +108,7 @@ __all__ = [
     "hyperedge_model_to_dem",
     "StabilityCircuitBuilder",
     "WalkingStabilityCircuitBuilder",
+    "EarlyWalkingXStabilityCircuitBuilder",
     "EarlyWalkingStabilityTransversalCXBuilder",
     "EarlyWalkingStabilityTCNOTBuilder",
     # Tracker

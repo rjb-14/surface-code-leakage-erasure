@@ -17,12 +17,13 @@ import stim
 from joblib import Parallel, delayed
 
 from .decoding import ErasureDecoder, require_pymatching_edge_reweights
-from .circuit_builder import iterate_erasure_checks
 from .stability_circuit import StabilityCircuitBuilder
 from .walking_stability_builder import WalkingStabilityCircuitBuilder
+from .early_walking_x_stability_builder import EarlyWalkingXStabilityCircuitBuilder
 
 
 STYLES = ("static", "early", "late")
+STABILITY_EXPERIMENTS = ("z", "x")
 DECODER_STRATEGIES = ("marginal", "quasi_mle")
 GRAPH_PROBABILITY_FLOOR = 1e-9
 CIRCUIT_KWARGS = {
@@ -66,11 +67,15 @@ class _Model:
     rounds: int
     p_pauli: float
     cache_size: int
+    stability_experiment: str = "z"
 
 
 class _Context:
     def __init__(self, model):
-        if model.style == "static":
+        self.circuit_kwargs = {**CIRCUIT_KWARGS, "basis": model.stability_experiment.upper()}
+        if model.stability_experiment == "x":
+            self.builder = EarlyWalkingXStabilityCircuitBuilder(model.distance)
+        elif model.style == "static":
             self.builder = StabilityCircuitBuilder(model.distance)
         else:
             self.builder = WalkingStabilityCircuitBuilder(
@@ -83,7 +88,7 @@ class _Context:
             self.decoder.get_Pauli_matcher_graphdict_edgedict
         )
         self.baseline_circuit, _ = self.builder.get_circuit(
-            model.rounds, model.p_pauli, **CIRCUIT_KWARGS
+            model.rounds, model.p_pauli, **self.circuit_kwargs
         )
         dem = self.baseline_circuit.detector_error_model(
             decompose_errors=True, approximate_disjoint_errors=True
@@ -111,38 +116,12 @@ def _ensure_leakage_edges(context, model, checks):
     quantization for every other edge; infinite weights cannot be added at all.
     """
     matcher, graph, logicals = context.decoder.get_Pauli_matcher_graphdict_edgedict(
-        model.rounds, model.p_pauli, **CIRCUIT_KWARGS
+        model.rounds, model.p_pauli, **context.circuit_kwargs
     )
-    for rnd, gate, qubit in iterate_erasure_checks(checks):
-        dem = context.decoder.get_single_ec_average_dem(
-            model.rounds, rnd, gate, qubit, **CIRCUIT_KWARGS
-        )
-        for hyperedge in dem:
-            for edge in hyperedge:
-                detectors = tuple(term for term in edge if type(term) is int)
-                if not detectors or detectors in logicals:
-                    continue
-                fault_ids = {
-                    int(term[1:])
-                    for term in edge
-                    if isinstance(term, str) and term.startswith("L")
-                }
-                probability = GRAPH_PROBABILITY_FLOOR
-                kwargs = dict(
-                    fault_ids=fault_ids,
-                    weight=math.log((1 - probability) / probability),
-                    error_probability=probability,
-                )
-                if len(detectors) == 1:
-                    matcher.add_boundary_edge(detectors[0], **kwargs)
-                elif len(detectors) == 2:
-                    matcher.add_edge(*detectors, **kwargs)
-                else:
-                    raise ValueError(
-                        "Single-patch stability decoding requires graphlike edges."
-                    )
-                logicals[detectors] = frozenset(fault_ids)
-                graph[(edge,)] = probability
+    context.decoder.ensure_leakage_edges(
+        checks, matcher, graph, logicals,
+        probability_floor=GRAPH_PROBABILITY_FLOOR, **context.circuit_kwargs,
+    )
 
 
 def _leakage_batch(model, p_leak, shots, strategy, args):
@@ -156,7 +135,7 @@ def _leakage_batch(model, p_leak, shots, strategy, args):
             model.rounds,
             model.p_pauli,
             leakage_circuit_locations=locations,
-            **CIRCUIT_KWARGS,
+            **context.circuit_kwargs,
         )
         simulator = stim.FlipSimulator(batch_size=1)
         simulator.do(circuit)
@@ -169,7 +148,7 @@ def _leakage_batch(model, p_leak, shots, strategy, args):
             model.p_pauli,
             branch_and_bound=strategy == "quasi_mle",
             **(args or {}),
-            **CIRCUIT_KWARGS,
+            **context.circuit_kwargs,
         )
         # Match the existing sample_LER convention when search finds no valid
         # solution within its time/queue budget.
@@ -184,8 +163,10 @@ def _leakage_batch(model, p_leak, shots, strategy, args):
 
 
 class StabilitySampler:
-    """Sample Z-basis stability using the repository's erasure-aware PyMatching.
+    """Sample Z/X-basis stability using erasure-aware PyMatching.
 
+    Z preserves the original static/early/late experiment. X selects the
+    clipped-corner early circuit with final Z-check-parity observable.
     Leakage is one Bernoulli trial per CNOT, choosing one of its qubits uniformly.
     Finite-bias Pauli noise is uniform DEPOLARIZE2 after two-qubit gates only.
     quasi_mle uses the existing bounded branch-and-bound search, not brute force.
@@ -195,10 +176,16 @@ class StabilitySampler:
     paired_marginal_strategies = ("quasi_mle",)
 
     def __init__(
-        self, *, style, distance, rounds, p_pauli=0.0, n_jobs=1, cache_size=4096
+        self, *, style, distance, rounds, p_pauli=0.0, n_jobs=1, cache_size=4096,
+        stability_experiment="z",
     ):
+        if not isinstance(stability_experiment, str) or stability_experiment.lower() not in STABILITY_EXPERIMENTS:
+            raise ValueError(f"stability_experiment must be one of {STABILITY_EXPERIMENTS}.")
+        stability_experiment = stability_experiment.lower()
         if style not in STYLES:
             raise ValueError(f"style must be one of {STYLES}.")
+        if stability_experiment == "x" and style != "early":
+            raise ValueError("X-basis stability currently requires style='early'.")
         for name, value in (
             ("distance", distance),
             ("rounds", rounds),
@@ -217,7 +204,7 @@ class StabilitySampler:
         ):
             raise ValueError("cache_size must be a non-negative integer.")
         require_pymatching_edge_reweights()
-        self.model = _Model(style, distance, rounds, float(p_pauli), cache_size)
+        self.model = _Model(style, distance, rounds, float(p_pauli), cache_size, stability_experiment)
         self.context = _worker_context(self.model)
         self.baseline_circuit = self.context.baseline_circuit
         self.num_leakage_trials = self.context.builder.count_leakage_locations(

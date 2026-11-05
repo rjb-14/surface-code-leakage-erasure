@@ -6,6 +6,7 @@ import itertools
 from dataclasses import dataclass
 import time
 import heapq
+import math
 import numpy as np
 # from line_profiler import profile
 from functools import lru_cache, cached_property
@@ -368,6 +369,45 @@ class ErasureDecoder:
         graphdict, edgedict = dem_to_dict_graphlike(dem, return_edge_logicals=True)
 
         return matcher, graphdict, edgedict
+
+    def ensure_leakage_edges(
+        self, erasure_checks, matcher, graphdict, edgedict,
+        probability_floor=1e-9, **circuit_kwargs,
+    ):
+        """Complete erasure topology before per-shot matching reweighting.
+
+        This is the existing stability sampler policy: add absent graphlike
+        edges and their logical labels at the existing probability floor.
+        The supplied graph must be the exact instance used by this decode,
+        including when optional decoder caching is disabled.
+        """
+        rounds = len(erasure_checks)
+        for rnd, gate, qubit in iterate_erasure_checks(erasure_checks):
+            dem = self.get_single_ec_average_dem(
+                rounds, rnd, gate, qubit, **circuit_kwargs,
+            )
+            for hyperedge in dem:
+                for edge in hyperedge:
+                    detectors = tuple(term for term in edge if type(term) is int)
+                    if not detectors or detectors in edgedict:
+                        continue
+                    fault_ids = {
+                        int(term[1:]) for term in edge
+                        if isinstance(term, str) and term.startswith("L")
+                    }
+                    kwargs = dict(
+                        fault_ids=fault_ids,
+                        weight=math.log((1-probability_floor) / probability_floor),
+                        error_probability=probability_floor,
+                    )
+                    if len(detectors) == 1:
+                        matcher.add_boundary_edge(detectors[0], **kwargs)
+                    elif len(detectors) == 2:
+                        matcher.add_edge(*detectors, **kwargs)
+                    else:
+                        raise ValueError("Single-patch stability decoding requires graphlike edges.")
+                    edgedict[detectors] = frozenset(fault_ids)
+                    graphdict[(edge,)] = probability_floor
 
     ## erasure DEMs
     def check_can_use_increment(self, rounds, event_rnd, event_type="leak", **circuit_kwargs):
@@ -799,6 +839,11 @@ class ErasureDecoder:
         rounds = len(erasure_checks)
         matcher, graphdict, edgedict = self.get_Pauli_matcher_graphdict_edgedict(
             rounds, p_Pauli, **circuit_kwargs)
+
+        if getattr(self.circuit_builder, "requires_erasure_graph_completion", False):
+            self.ensure_leakage_edges(
+                erasure_checks, matcher, graphdict, edgedict, **circuit_kwargs,
+            )
 
         # get reweighting info from erasure checks
         edge_updates = self.calculate_edge_updates(

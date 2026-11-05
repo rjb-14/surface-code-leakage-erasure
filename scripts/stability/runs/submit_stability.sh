@@ -47,16 +47,16 @@ run_python -c \
 
 if [[ -z "${SLURM_JOB_ID:-}" ]]; then
     mkdir -p slurm
-    NUM_SHARDS="$(run_python "$RUN_SCRIPT" --print-num-shards)"
-    RUN_TAG="$(run_python "$RUN_SCRIPT" --print-run-tag)"
-    run_python "$RUN_SCRIPT" --dry-run
-    echo "Submitting ${NUM_SHARDS} shards for ${RUN_TAG}."
+    NUM_SHARDS="$(run_python "$RUN_SCRIPT" --print-num-shards "$@")"
+    JOB_NAME="$(run_python "$RUN_SCRIPT" --print-job-name "$@")"
+    run_python "$RUN_SCRIPT" --dry-run "$@"
+    echo "Submitting ${NUM_SHARDS} shards for ${JOB_NAME}."
     sbatch \
         --array="1-${NUM_SHARDS}" \
         --chdir="$REPO_ROOT" \
-        --job-name="$RUN_TAG" \
-        "$SUBMIT_SCRIPT"
+        --job-name="$JOB_NAME" \
+        "$SUBMIT_SCRIPT" "$@"
     exit 0
 fi
 
-run_python "$RUN_SCRIPT"
+run_python "$RUN_SCRIPT" "$@"

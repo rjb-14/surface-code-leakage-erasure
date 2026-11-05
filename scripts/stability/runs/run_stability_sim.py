@@ -1,4 +1,4 @@
-"""Run single-patch static/early/late stability Monte Carlo sweeps.
+"""Run single-patch Z/X-basis stability Monte Carlo sweeps.
 
 Edit the configuration block, inspect with --dry-run, then run
 ./scripts/stability/runs/submit_stability.sh on a Yale login node.
@@ -32,6 +32,9 @@ if str(REPO_ROOT / "src") not in sys.path:
 
 # Select any subset of ("static", "early", "late"). All require even distance.
 STYLES = ("early", "late")
+# Names denote data preparation/readout basis. X selects the new clipped-corner
+# Z-check-parity experiment and requires STYLES=("early",).
+STABILITY_EXPERIMENT = "z"  # "z" (original) or "x" (early only)
 D_LIST = [4]
 ROUNDS_MODE = "explicit"  # "explicit": D x R; "match_distance": rounds=d
 R_LIST = [3, 5, 7]
@@ -89,6 +92,7 @@ class RunConfig:
     min_shots: int
     decoder_cache_size: int
     run_tag: str
+    stability_experiment: str = "z"
 
     @property
     def leakage_only(self):
@@ -127,8 +131,12 @@ def _integers(name, values, allow_empty=False):
     return converted
 
 
-def configured_run():
-    styles = tuple(STYLES)
+def configured_run(*, stability_experiment=None, styles=None):
+    experiment = STABILITY_EXPERIMENT if stability_experiment is None else stability_experiment
+    if not isinstance(experiment, str) or experiment.lower() not in ("z", "x"):
+        raise ValueError("STABILITY_EXPERIMENT must be 'z' or 'x'.")
+    experiment = experiment.lower()
+    styles = tuple(STYLES if styles is None else styles)
     if (
         not styles
         or len(styles) != len(set(styles))
@@ -137,6 +145,8 @@ def configured_run():
         raise ValueError(
             f"STYLES must be a non-empty, unique subset of {SUPPORTED_STYLES}."
         )
+    if experiment == "x" and styles != ("early",):
+        raise ValueError("X-basis stability currently requires STYLES=('early',) / --style early.")
     d_list = _integers("D_LIST", D_LIST)
     if any(d % 2 for d in d_list):
         raise ValueError("Every D must be positive and even for stability.")
@@ -219,6 +229,7 @@ def configured_run():
         min_shots,
         cache_size,
         RUN_TAG,
+        experiment,
     )
 
 
@@ -269,11 +280,29 @@ def _identity(config):
         # Older quasi_mle runs did not retain marginal counts and cannot resume
         # into paired statistics. Marginal-only identities remain unchanged.
         identity.update(schema_version=2, recorded_decoders=["quasi_mle", "marginal"])
+    if config.stability_experiment == "x":
+        # Keep legacy Z identities byte-for-byte compatible for CSV resumes.
+        identity.update(
+            schema_version=3,
+            stability_experiment="x",
+            basis="X",
+            mode="walking",
+            swap_time="early",
+            observable="final_regular_z_check_parity",
+            geometry="clipped_corners_d2_special",
+        )
     return identity
 
 
 def _output_directory(config):
-    return REPO_ROOT / "data" / "stability" / "runs" / config.run_tag
+    root = REPO_ROOT / "data" / "stability" / "runs"
+    if config.stability_experiment == "x":
+        root /= "x"
+    return root / config.run_tag
+
+
+def _job_name(config):
+    return f"x_{config.run_tag}" if config.stability_experiment == "x" else config.run_tag
 
 
 def _ensure_identity_manifest(directory, config):
@@ -313,7 +342,9 @@ def _metadata(config, task, p_pauli):
         metadata.pop(key)
     metadata.update(
         circuit=(
-            "StabilityCircuitBuilder"
+            "EarlyWalkingXStabilityCircuitBuilder"
+            if config.stability_experiment == "x"
+            else "StabilityCircuitBuilder"
             if task.style == "static"
             else "WalkingStabilityCircuitBuilder"
         ),
@@ -348,27 +379,29 @@ def _build_sampler(config, task, p_pauli, n_jobs):
         p_pauli=p_pauli,
         n_jobs=n_jobs,
         cache_size=config.decoder_cache_size,
+        stability_experiment=config.stability_experiment,
     )
 
 
 def _run_group(config, group, shard_index, output_directory):
     from surface_code_leakage_erasure.collect import collect
 
+    experiment_label = "x_" if config.stability_experiment == "x" else ""
     path = (
         output_directory
-        / f"{config.run_tag}_s{shard_index:04d}_{_shard_label(group)}.csv"
+        / f"{config.run_tag}_s{shard_index:04d}_{experiment_label}{_shard_label(group)}.csv"
     )
     n_jobs = _worker_count()
     sampler = None
     current_key = None
     for task in group:
         p_pauli = 0.0 if config.leakage_only else task.p_leak / config.bias
-        key = (task.style, task.d, task.rounds, p_pauli)
+        key = (config.stability_experiment, task.style, task.d, task.rounds, p_pauli)
         if key != current_key:
             sampler = _build_sampler(config, task, p_pauli, n_jobs)
             current_key = key
         print(
-            f"[{config.run_tag}] shard={shard_index} style={task.style} "
+            f"[{config.run_tag}] experiment={config.stability_experiment} shard={shard_index} style={task.style} "
             f"d={task.d} r={task.rounds} p_leak={task.p_leak:.12g} "
             f"bias={config.bias_label} decoder={config.decoder_strategy} workers={n_jobs}",
             flush=True,
@@ -390,8 +423,15 @@ def _run_group(config, group, shard_index, output_directory):
 
 def _parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--stability-experiment", type=str.lower, choices=("z", "x"),
+        help="Data preparation/readout basis: z preserves the original experiment; x requires --style early.",
+    )
+    parser.add_argument("--style", dest="styles", nargs="+", choices=SUPPORTED_STYLES,
+                        help="Override STYLES; x stability supports early only.")
     parser.add_argument("--print-num-shards", action="store_true")
     parser.add_argument("--print-run-tag", action="store_true")
+    parser.add_argument("--print-job-name", action="store_true")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -407,13 +447,21 @@ def _parse_args(argv=None):
 
 def main(argv=None):
     args = _parse_args(argv)
-    config = configured_run()
+    overrides = {}
+    if args.stability_experiment is not None:
+        overrides["stability_experiment"] = args.stability_experiment
+    if args.styles is not None:
+        overrides["styles"] = args.styles
+    config = configured_run(**overrides)
     groups = build_task_groups(config)
     if args.print_num_shards:
         print(len(groups))
         return 0
     if args.print_run_tag:
         print(config.run_tag)
+        return 0
+    if args.print_job_name:
+        print(_job_name(config))
         return 0
     if args.dry_run:
         print(

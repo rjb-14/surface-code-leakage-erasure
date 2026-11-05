@@ -3,8 +3,9 @@
 `run_stability_sim.py` and `submit_stability.sh` provide the configurable,
 resumable workflow corresponding to `10_interleaved_stability.py` in
 `biased-noise-qec` and this repository's `run_tcnot_sim.py`. They use this
-repository's **single-patch** static / early-walking / late-walking stability
-circuits, with no transversal logical gate.
+repository's **single-patch** stability circuits, with no transversal logical
+gate. The original Z-basis experiment supports static / early / late; the new
+X-basis experiment uses the clipped-corner early-walking circuit.
 
 ## Setup
 
@@ -27,7 +28,11 @@ does not implement the required interface.
 
 Edit the configuration block in `run_stability_sim.py`:
 
-- `STYLES`: any subset of `("static", "early", "late")`.
+- `STABILITY_EXPERIMENT="z"` (default) or `"x"`. Names refer to **data
+  preparation/readout basis**: Z preserves the original experiment with final
+  X-check parity; X uses the new circuit with final **Z-check parity**.
+- `STYLES`: any subset of `("static", "early", "late")` for Z. X currently
+  requires `STYLES=("early",)`; static/late X combinations are rejected.
 - `D_LIST`: positive even distances.
 - `ROUNDS_MODE="explicit"`: full `STYLES × D_LIST × R_LIST × P_LEAK_LIST`
   sweep. With `"match_distance"`, use `rounds=d` for each distance instead.
@@ -42,7 +47,7 @@ Edit the configuration block in `run_stability_sim.py`:
 - `RUN_TAG`: choose a new tag when the sweep, physics, or decoder settings
   change. Budgets can be increased under the same tag to extend a run.
 
-The current physical model is Z-basis stability, `ec_sched=8`, skip-gate leakage,
+Both experiments use `ec_sched=8`, skip-gate leakage,
 and **one Bernoulli trial per two-qubit gate**, choosing either qubit uniformly.
 Other leakage effects and per-qubit trials are rejected by configuration
 validation rather than being silently substituted.
@@ -61,14 +66,49 @@ conda run --no-capture-output -n surface-leakage \
 ./scripts/stability/runs/submit_stability.sh
 ```
 
+For the new X-basis experiment, either edit the configuration block:
+
+```python
+STABILITY_EXPERIMENT = "x"
+STYLES = ("early",)
+RUN_TAG = "stability_x_early_leak_only_marginal"
+```
+
+or override the experiment and styles from the command line:
+
+```bash
+conda run --no-capture-output -n surface-leakage \
+  python scripts/stability/runs/run_stability_sim.py \
+  --stability-experiment x --style early --dry-run
+
+# After lowering the configured budgets for a local pilot:
+conda run --no-capture-output -n surface-leakage \
+  python scripts/stability/runs/run_stability_sim.py \
+  --stability-experiment x --style early --task-index 1
+
+# On the cluster login node; arguments are forwarded to every array worker:
+./scripts/stability/runs/submit_stability.sh \
+  --stability-experiment x --style early
+```
+
+`--stability-experiment` accepts `x/X` and `z/Z`; `--style` accepts one or more
+styles. X requires only `early`. The new X circuit preserves the d=2 special
+geometry and clips the four data corners at d>=4. Both marginal and quasi-MLE,
+leakage-only and finite-bias sampling use the selected experiment.
+
 Set `CONDA_ENV=another-name` when using a different environment. The wrapper
 uses 4 CPUs per array element; Python uses `SLURM_CPUS_PER_TASK` workers, or one
 worker outside Slurm. Leakage-only runs group the full probability sweep by
 `(style, d, rounds)` to reuse circuits and decoder caches. Finite-bias runs use
 one physical point per shard. The checked-in configuration (early/late, d=4,
 rounds=3/5/7, 21 probabilities) has **126 physical points in 6 shards**.
+Selecting X with `--style early` gives **63 physical points in 3 shards** for
+the same distances, rounds, and probabilities. Finite bias still gives one
+physical point per shard.
 
-`--print-num-shards` and `--print-run-tag` support submission scripting. `--all`
+`--print-num-shards`, `--print-run-tag`, and `--print-job-name` support submission
+scripting. X job names have an `x_` prefix; `--print-run-tag` still returns the
+configured tag unchanged. `--all`
 explicitly runs every shard sequentially; invoking the driver without a shard
 selection refuses to start the full production sweep.
 
@@ -93,8 +133,10 @@ including exactly zero.
 Set a finite `mle_time_limit` in seconds to bound each search. Queue trimming
 still applies; this is **not** the reference repository's exact `brute_force`
 mode. If the search returns no valid solution, its marginal prediction is used,
-matching the existing `sample_LER` convention. Only the selected strategy's
-failures count toward the error budget and CSV.
+matching the existing `sample_LER` convention. With `quasi_mle`, the same shots
+also accumulate marginal failures using the prediction already returned by the
+decoder; no additional sampling or decoding is needed. Only quasi-MLE failures
+count toward the error budget, so both results have the same shot count.
 
 Each shot belongs to the leakage/no-leakage population with a binomial draw
 using `1-(1-p_leak)**N` for `N` gate trials. Leakage shots are sampled
@@ -106,14 +148,35 @@ fresh randomness.
 
 ## Results and resuming
 
-Each shard appends batch statistics to its own Sinter CSV under
-`data/stability/runs/<RUN_TAG>/`. The output directory also contains
+Each shard appends batch statistics to its own Sinter CSV. Original Z results
+stay under `data/stability/runs/<RUN_TAG>/`; X results use
+`data/stability/runs/x/<RUN_TAG>/` and an additional `_x_early_` filename label.
+The output directory also contains
 `identity.json`; incompatible configurations under the same tag are rejected.
-Slurm logs go to `slurm/<RUN_TAG>-<array job>_<array index>.out` and `.err`.
+Z Slurm logs retain `slurm/<RUN_TAG>-<array job>_<array index>.out` and `.err`;
+X logs use `slurm/x_<RUN_TAG>-<array job>_<array index>.out` and `.err`.
+
+X manifests/CSV metadata explicitly record `stability_experiment="x"`,
+`basis="X"`, `mode="walking"`, `swap_time="early"`, the clipped-corner
+geometry, and `observable="final_regular_z_check_parity"`. Original Z manifest
+schemas and CSV identities remain unchanged, so existing Z runs can resume;
+legacy metadata without `stability_experiment` retains its original Z meaning.
+The worker cache key includes the experiment, preventing the two geometries
+from sharing builders or decoder caches.
+
+For `quasi_mle`, every batch writes two rows, distinguished by the CSV `decoder`
+column (`quasi_mle` and `marginal`). The marginal row's metadata records
+`paired_with="quasi_mle"` and `paired_decoder_args` to identify its source run.
+Compute time is charged to the quasi-MLE row; the marginal row has `seconds=0`
+to avoid double counting. Marginal-only runs still write one row per batch.
 
 Resubmit the same configuration or rerun the same `--task-index` to count
 existing shots/errors toward the budgets. Completed points are skipped. You can
 increase `MAX_SHOTS`, `MAX_ERRORS`, or `MIN_SHOTS` without changing the tag.
+Both decoder records resume together. Choose a new `RUN_TAG` for quasi-MLE runs
+created before paired recording was added: their missing marginal counts cannot
+be reconstructed, and the old manifest is deliberately rejected. Direct CSV
+collection also rejects unequal quasi-MLE/marginal shot counts before appending.
 Keep this workflow separate from the older `.dat` outputs; they have different
 statistics and are not imported as resume data.
 
